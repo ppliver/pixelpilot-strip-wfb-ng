@@ -1,0 +1,319 @@
+package com.openipc.pixelpilot.rc;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
+
+import com.openipc.mavlink.MavlinkNative;
+
+import java.util.Arrays;
+
+/**
+ * Owns the RC control model and drives RC_CHANNELS_OVERRIDE emission.
+ *
+ * <ul>
+ *   <li>Sticks (virtual joystick or gamepad) map to channels 1-4 via a Mode 1/2 table.</li>
+ *   <li>Gamepad triggers / D-pad extend control to channels 5-8.</li>
+ *   <li>Channels 9-18 are sent as "ignore" (not driven in this build).</li>
+ *   <li>When enabled, a periodic loop sends the 18-channel override on the same
+ *       UDP socket the MAVLink listener uses, to the learned peer (or a manual target).</li>
+ * </ul>
+ */
+public class RcControllerManager implements VirtualJoystickView.StickListener,
+        GamepadManager.AxesListener {
+
+    public static final int MAX_CHANNELS = 18;
+    private static final float DEADZONE = 0.04f;
+    private static final String PREFS = "rc_control";
+    private static final String TAG = "RcController";
+
+    // stickToChannel index: 0=LX, 1=LY, 2=RX, 3=RY
+    private static final int[] MODE2 = {4, 3, 1, 2}; // L: yaw(X)+throttle(Y)  R: roll(X)+pitch(Y)
+    private static final int[] MODE1 = {4, 2, 1, 3}; // L: yaw(X)+pitch(Y)    R: roll(X)+throttle(Y)
+
+    public interface DisplayListener {
+        void onChannels(int[] pwm, boolean sentOk);
+    }
+
+    public static class ChannelCfg {
+        public int min = 1000;
+        public int max = 2000;
+        public int center = 1500;
+        public int trim = 0;
+        public boolean inverted = false;
+        public boolean enabled = true;
+    }
+
+    private final Context context;
+    private final SharedPreferences prefs;
+    private final ChannelCfg[] channels = new ChannelCfg[MAX_CHANNELS];
+    private final Handler sendHandler = new Handler(Looper.getMainLooper());
+
+    private int mode = 2;
+    private int[] stickToChannel = MODE2.clone();
+
+    private boolean enabled = false;
+    private boolean showSticks = false;
+    private int rateHz = 20;
+    private boolean manualTarget = false;
+    private String manualIp = "192.168.1.10";
+    private int manualPort = 14550;
+
+    // axis sources (normalized -1..1). Index: 0=LX,1=LY,2=RX,3=RY
+    private final float[] joyAxes = new float[4];
+    private final float[] gpadAxes = new float[4];
+    private final float[] gpadAux = new float[4]; // ch5..ch8 (brake,gas,hatX,hatY)
+    private long lastGamepadMs = 0;
+
+    private int[] lastPwm = new int[MAX_CHANNELS];
+    private DisplayListener displayListener;
+
+    private final Runnable sendRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!enabled) return;
+            int[] pwm = computePwm();
+            boolean ok = MavlinkNative.nativeSendRcChannels(pwm);
+            lastPwm = pwm;
+            if (displayListener != null) displayListener.onChannels(pwm, ok);
+            sendHandler.postDelayed(this, 1000 / rateHz);
+        }
+    };
+
+    public RcControllerManager(Context context) {
+        this.context = context;
+        this.prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        for (int i = 0; i < MAX_CHANNELS; i++) channels[i] = new ChannelCfg();
+        loadConfig();
+    }
+
+    public void setDisplayListener(DisplayListener l) {
+        this.displayListener = l;
+    }
+
+    // ---- lifecycle ----------------------------------------------------------
+
+    public void start() {
+        if (enabled) {
+            applyTarget();
+            sendHandler.removeCallbacks(sendRunnable);
+            sendHandler.postDelayed(sendRunnable, 1000 / rateHz);
+        }
+    }
+
+    public void stop() {
+        sendHandler.removeCallbacks(sendRunnable);
+    }
+
+    // ---- configuration -------------------------------------------------------
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+        prefs.edit().putBoolean("enabled", enabled).apply();
+        if (enabled) {
+            applyTarget();
+            sendHandler.removeCallbacks(sendRunnable);
+            sendHandler.postDelayed(sendRunnable, 1000 / rateHz);
+        } else {
+            sendHandler.removeCallbacks(sendRunnable);
+        }
+    }
+
+    public boolean isShowSticks() {
+        return showSticks;
+    }
+
+    public void setShowSticks(boolean show) {
+        this.showSticks = show;
+        prefs.edit().putBoolean("show_sticks", show).apply();
+    }
+
+    public int getMode() {
+        return mode;
+    }
+
+    public void setMode(int mode) {
+        this.mode = (mode == 1) ? 1 : 2;
+        stickToChannel = (this.mode == 1) ? MODE1.clone() : MODE2.clone();
+        prefs.edit().putInt("mode", this.mode).apply();
+    }
+
+    public int getThrottleSide() {
+        return (mode == 2) ? VirtualJoystickView.LEFT : VirtualJoystickView.RIGHT;
+    }
+
+    public int getRateHz() {
+        return rateHz;
+    }
+
+    public void setRateHz(int hz) {
+        this.rateHz = Math.max(5, Math.min(50, hz));
+        prefs.edit().putInt("rate_hz", this.rateHz).apply();
+    }
+
+    public boolean isManualTarget() {
+        return manualTarget;
+    }
+
+    public void setManualTarget(boolean manual, String ip, int port) {
+        this.manualTarget = manual;
+        if (ip != null) this.manualIp = ip;
+        if (port > 0) this.manualPort = port;
+        prefs.edit().putBoolean("target_manual", manual)
+                .putString("manual_ip", this.manualIp)
+                .putInt("manual_port", this.manualPort).apply();
+        if (enabled) applyTarget();
+    }
+
+    public String getManualIp() {
+        return manualIp;
+    }
+
+    public int getManualPort() {
+        return manualPort;
+    }
+
+    public ChannelCfg getChannel(int index1Based) {
+        return channels[index1Based - 1];
+    }
+
+    public void setChannel(int index1Based, ChannelCfg cfg) {
+        channels[index1Based - 1] = cfg;
+        saveChannels();
+    }
+
+    // ---- input feeds --------------------------------------------------------
+
+    @Override
+    public void onStick(String side, float nx, float ny) {
+        int base = "left".equals(side) ? 0 : 2;
+        joyAxes[base] = nx;
+        joyAxes[base + 1] = ny;
+    }
+
+    @Override
+    public void onAxes(float lx, float ly, float rx, float ry,
+                       float ch5, float ch6, float ch7, float ch8) {
+        gpadAxes[0] = lx;
+        gpadAxes[1] = ly;
+        gpadAxes[2] = rx;
+        gpadAxes[3] = ry;
+        gpadAux[0] = ch5;
+        gpadAux[1] = ch6;
+        gpadAux[2] = ch7;
+        gpadAux[3] = ch8;
+        lastGamepadMs = System.currentTimeMillis();
+    }
+
+    private boolean isGamepadActive() {
+        return (System.currentTimeMillis() - lastGamepadMs) < 2000;
+    }
+
+    public boolean isGamepadConnected() {
+        return isGamepadActive();
+    }
+
+    // ---- core compute --------------------------------------------------------
+
+    private int[] computePwm() {
+        int[] pwm = new int[MAX_CHANNELS];
+        for (int i = 0; i < MAX_CHANNELS; i++) {
+            pwm[i] = (i < 8) ? 65535 : 0; // 1-8: 65535=ignore, 9-18: 0=ignore
+        }
+
+        boolean gp = isGamepadActive();
+        float[] a = gp ? gpadAxes : joyAxes;
+
+        for (int i = 0; i < 4; i++) {
+            int c = stickToChannel[i];
+            if (c >= 1 && c <= MAX_CHANNELS) {
+                pwm[c - 1] = mapAxis(a[i], c);
+            }
+        }
+
+        if (gp) {
+            pwm[4] = mapAxis(gpadAux[0] * 2f - 1f, 5); // brake 0..1 -> -1..1
+            pwm[5] = mapAxis(gpadAux[1] * 2f - 1f, 6); // gas
+            pwm[6] = mapAxis(gpadAux[2], 7);           // hat X
+            pwm[7] = mapAxis(gpadAux[3], 8);           // hat Y
+        }
+        return pwm;
+    }
+
+    private int mapAxis(float raw, int ch1Based) {
+        ChannelCfg cfg = channels[ch1Based - 1];
+        if (!cfg.enabled) return (ch1Based <= 8) ? 65535 : 0;
+        float a = raw;
+        if (Math.abs(a) < DEADZONE) a = 0f;
+        double span = (cfg.inverted ? -1 : 1) * (cfg.max - cfg.center);
+        int v = (int) Math.round(cfg.center + a * span);
+        v += cfg.trim;
+        return Math.max(cfg.min, Math.min(cfg.max, v));
+    }
+
+    private void applyTarget() {
+        if (manualTarget) {
+            MavlinkNative.nativeSetRcTarget(manualIp, manualPort);
+        } else {
+            MavlinkNative.nativeSetRcTarget(null, 0);
+        }
+    }
+
+    public int[] getLastPwm() {
+        return Arrays.copyOf(lastPwm, lastPwm.length);
+    }
+
+    // ---- persistence ---------------------------------------------------------
+
+    private void loadConfig() {
+        enabled = prefs.getBoolean("enabled", false);
+        showSticks = prefs.getBoolean("show_sticks", false);
+        mode = prefs.getInt("mode", 2);
+        stickToChannel = (mode == 1) ? MODE1.clone() : MODE2.clone();
+        rateHz = prefs.getInt("rate_hz", 20);
+        manualTarget = prefs.getBoolean("target_manual", false);
+        manualIp = prefs.getString("manual_ip", "192.168.1.10");
+        manualPort = prefs.getInt("manual_port", 14550);
+        loadChannels();
+    }
+
+    private void loadChannels() {
+        String raw = prefs.getString("channels_cfg", "");
+        if (raw.isEmpty()) return;
+        String[] parts = raw.split(";");
+        for (int i = 0; i < MAX_CHANNELS && i < parts.length; i++) {
+            String[] f = parts[i].split(",");
+            if (f.length < 6) continue;
+            try {
+                ChannelCfg c = channels[i];
+                c.min = Integer.parseInt(f[0]);
+                c.max = Integer.parseInt(f[1]);
+                c.center = Integer.parseInt(f[2]);
+                c.trim = Integer.parseInt(f[3]);
+                c.inverted = f[4].equals("1");
+                c.enabled = f[5].equals("1");
+            } catch (NumberFormatException ignored) {
+                Log.w(TAG, "bad channel cfg entry: " + parts[i]);
+            }
+        }
+    }
+
+    private void saveChannels() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < MAX_CHANNELS; i++) {
+            ChannelCfg c = channels[i];
+            if (i > 0) sb.append(';');
+            sb.append(c.min).append(',').append(c.max).append(',').append(c.center)
+                    .append(',').append(c.trim).append(',')
+                    .append(c.inverted ? '1' : '0').append(',')
+                    .append(c.enabled ? '1' : '0');
+        }
+        prefs.edit().putString("channels_cfg", sb.toString()).apply();
+    }
+}

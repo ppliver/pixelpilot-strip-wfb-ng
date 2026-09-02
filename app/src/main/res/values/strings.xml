@@ -1,3 +1,37 @@
 <resources>
     <string name="app_name">PixelPilot</string>
+
+    <!-- RC control -->
+    <string name="rc_title">RC 控制</string>
+    <string name="rc_enable">启用 RC 遥控</string>
+    <string name="rc_enable_on">RC 遥控：开</string>
+    <string name="rc_enable_off">RC 遥控：关</string>
+    <string name="rc_show_sticks">显示虚拟摇杆</string>
+    <string name="rc_mode">摇杆模式</string>
+    <string name="rc_mode1">模式 1（左：俯仰/方向，右：横滚/油门）</string>
+    <string name="rc_mode2">模式 2（左：油门/方向，右：横滚/俯仰）</string>
+    <string name="rc_rate">发送频率</string>
+    <string name="rc_target">回传目标</string>
+    <string name="rc_target_auto">自动（学习对端地址）</string>
+    <string name="rc_target_manual">手动（指定 IP:端口）</string>
+    <string name="rc_manual_ip_hint">目标 IP（如 192.168.1.10）</string>
+    <string name="rc_manual_port_hint">目标端口（如 14550）</string>
+    <string name="rc_channel_config">通道配置</string>
+    <string name="rc_lock">摇杆锁定</string>
+    <string name="rc_unlock">摇杆解锁</string>
+    <string name="rc_config">配置</string>
+    <string name="rc_hide">隐藏</string>
+    <string name="rc_status_idle">未启用</string>
+    <string name="rc_status_sending">发送中</string>
+    <string name="rc_status_nolink">无链路</string>
+    <string name="rc_status_gamepad">手柄已连接</string>
+    <string name="rc_channel">通道</string>
+    <string name="rc_min">最小</string>
+    <string name="rc_max">最大</string>
+    <string name="rc_center">中点</string>
+    <string name="rc_trim">微调</string>
+    <string name="rc_invert">反向</string>
+    <string name="rc_enabled">启用</string>
+    <string name="rc_apply">应用</string>
+    <string name="rc_done">完成</string>
 </resources>

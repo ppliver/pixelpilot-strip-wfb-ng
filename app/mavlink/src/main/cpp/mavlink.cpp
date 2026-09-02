@@ -57,6 +57,20 @@ long distance_meters_between(double lat1, double lon1, double lat2, double lon2)
 int mavlink_thread_signal = 0;
 std::atomic<bool> latestMavlinkDataChange = false;
 
+// ---- RC override send path (shared between listen thread and JNI send) ----
+static int g_mavlink_fd = -1;                 // UDP socket used for both recv and send
+static struct sockaddr_in g_peer_addr {};     // last source address seen on incoming traffic
+static bool g_has_peer = false;
+static uint8_t g_ap_sysid = 1;                // last autopilot system id (from HEARTBEAT)
+static pthread_mutex_t g_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static struct sockaddr_in g_manual_target {}; // manual RC target (IP:Port) when set
+static bool g_has_manual_target = false;
+
+// GCS identity used when emitting RC_CHANNELS_OVERRIDE
+static const uint8_t RC_SRC_SYSID = 255;
+static const uint8_t RC_SRC_COMPID = 240;     // MAV_COMP_ID_UDP_BRIDGE
+
 void *listen(int mavlink_port) {
     __android_log_print(ANDROID_LOG_DEBUG, TAG, "Starting mavlink thread...");
     // Create socket
@@ -81,6 +95,8 @@ void *listen(int mavlink_port) {
         return 0;
     }
 
+    g_mavlink_fd = fd;
+
     // Set Rx timeout
     struct timeval tv;
     tv.tv_sec = 0;
@@ -94,7 +110,10 @@ void *listen(int mavlink_port) {
     char buffer[2048];
     while (!mavlink_thread_signal) {
         memset(buffer, 0x00, sizeof(buffer));
-        int ret = recv(fd, buffer, sizeof(buffer), 0);
+        struct sockaddr_in from {};
+        socklen_t fromlen = sizeof(from);
+        int ret = recvfrom(fd, buffer, sizeof(buffer), 0,
+                           (struct sockaddr *) &from, &fromlen);
         if (ret < 0) {
             // Check for timeout vs real error
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -110,6 +129,12 @@ void *listen(int mavlink_port) {
             return 0;
         }
 
+        // Remember the source address so we can send RC override back to it.
+        pthread_mutex_lock(&g_peer_mutex);
+        g_peer_addr = from;
+        g_has_peer = true;
+        pthread_mutex_unlock(&g_peer_mutex);
+
         // Parse
         mavlink_message_t msgMav;
         mavlink_status_t status;
@@ -123,6 +148,7 @@ void *listen(int mavlink_port) {
                         tmp32 = mavlink_msg_heartbeat_get_custom_mode(&msgMav);
                         tmp8 = mavlink_msg_heartbeat_get_base_mode(&msgMav);
                         latestMavlinkData.flight_mode = 0;
+                        g_ap_sysid = msgMav.sysid;
                         if (tmp8 & MAV_MODE_FLAG_SAFETY_ARMED) {
                             latestMavlinkData.telemetry_arm = 1;
                             if (latestMavlinkData.gps_fix_type != 0) {
@@ -316,7 +342,90 @@ void *listen(int mavlink_port) {
     }
 
     __android_log_print(ANDROID_LOG_DEBUG, TAG, "Mavlink thread done.");
+    g_mavlink_fd = -1;
     return 0;
+}
+
+// ----------------------------------------------------------------------------
+// RC override send API (called from Java side at the configured rate)
+// ----------------------------------------------------------------------------
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_openipc_mavlink_MavlinkNative_nativeSendRcChannels(JNIEnv *env, jclass clazz,
+                                                            jintArray channels) {
+    if (g_mavlink_fd < 0) {
+        __android_log_print(ANDROID_LOG_WARN, TAG, "RC send skipped: mavlink socket not ready");
+        return JNI_FALSE;
+    }
+
+    struct sockaddr_in target {};
+    bool has_target = false;
+    pthread_mutex_lock(&g_peer_mutex);
+    if (g_has_manual_target) {
+        target = g_manual_target;
+        has_target = true;
+    } else if (g_has_peer) {
+        target = g_peer_addr;
+        has_target = true;
+    }
+    pthread_mutex_unlock(&g_peer_mutex);
+
+    if (!has_target) {
+        __android_log_print(ANDROID_LOG_WARN, TAG,
+                            "RC send skipped: no target (peer not seen, no manual target set)");
+        return JNI_FALSE;
+    }
+
+    jint *ch = env->GetIntArrayElements(channels, nullptr);
+    if (ch == nullptr) return JNI_FALSE;
+    jsize len = env->GetArrayLength(channels);
+    uint16_t c[18];
+    for (int i = 0; i < 18; ++i) {
+        c[i] = (i < len) ? (uint16_t) ch[i] : 0;
+    }
+    env->ReleaseIntArrayElements(channels, ch, JNI_ABORT);
+
+    mavlink_message_t msg;
+    mavlink_msg_rc_channels_override_pack(RC_SRC_SYSID, RC_SRC_COMPID, &msg,
+                                          g_ap_sysid, 1 /* MAV_COMP_ID_AUTOPILOT */,
+                                          c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7],
+                                          c[8], c[9], c[10], c[11], c[12], c[13], c[14], c[15],
+                                          c[16], c[17]);
+
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    uint16_t mlen = mavlink_msg_to_send_buffer(buf, &msg);
+    ssize_t sent = sendto(g_mavlink_fd, buf, mlen, 0,
+                          (struct sockaddr *) &target, sizeof(target));
+    if (sent != (ssize_t) mlen) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "RC send failed: %s", strerror(errno));
+        return JNI_FALSE;
+    }
+    return JNI_TRUE;
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_openipc_mavlink_MavlinkNative_nativeSetRcTarget(JNIEnv *env, jclass clazz,
+                                                         jstring ip, jint port) {
+    pthread_mutex_lock(&g_peer_mutex);
+    if (ip == nullptr) {
+        g_has_manual_target = false;
+        memset(&g_manual_target, 0, sizeof(g_manual_target));
+    } else {
+        const char *ipc = env->GetStringUTFChars(ip, nullptr);
+        memset(&g_manual_target, 0, sizeof(g_manual_target));
+        g_manual_target.sin_family = AF_INET;
+        if (inet_pton(AF_INET, ipc, &g_manual_target.sin_addr) != 1) {
+            __android_log_print(ANDROID_LOG_ERROR, TAG, "RC manual target: bad IP %s", ipc);
+        }
+        g_manual_target.sin_port = htons((uint16_t) port);
+        env->ReleaseStringUTFChars(ip, ipc);
+        g_has_manual_target = true;
+        __android_log_print(ANDROID_LOG_INFO, TAG, "RC manual target set to %s:%d",
+                            (ipc ? ipc : ""), port);
+    }
+    pthread_mutex_unlock(&g_peer_mutex);
 }
 
 extern "C"

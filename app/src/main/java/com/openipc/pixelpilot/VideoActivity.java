@@ -18,6 +18,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.text.Editable;
+import android.text.InputType;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.MenuItem;
@@ -45,6 +46,15 @@ import com.openipc.pixelpilot.osd.OSDManager;
 import com.openipc.videonative.DecodingInfo;
 import com.openipc.videonative.IVideoParamsChanged;
 import com.openipc.videonative.VideoPlayer;
+import com.openipc.pixelpilot.rc.RcControllerManager;
+import com.openipc.pixelpilot.rc.GamepadManager;
+import com.openipc.pixelpilot.rc.VirtualJoystickView;
+
+import androidx.appcompat.app.AlertDialog;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -121,6 +131,11 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     private Boolean objectDetectionRuntimeSupported = null;
 
     private static final String PREF_DVR_FILENAME = "dvr_filename";
+
+    // RC control
+    private RcControllerManager rcManager;
+    private GamepadManager gamepad;
+    private TextView[] chVal = new TextView[8];
 
     public boolean getVRSetting() {
         return getSharedPreferences("general", Context.MODE_PRIVATE).getBoolean("vr-mode", false);
@@ -238,6 +253,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         // Mavlink Setup
         setupMavlink();
+
+        // RC control (virtual joystick + gamepad -> RC_CHANNELS_OVERRIDE)
+        setupRcController();
 
         // Battery Receiver
         setupBatteryReceiver();
@@ -484,6 +502,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         // Object Detection submenu
         setupObjectDetectionSubMenu(popup);
 
+        // RC control submenu
+        setupRcSubMenu(popup);
+
         popup.show();
     }
 
@@ -684,6 +705,300 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     private void setupMavlink() {
         MavlinkNative.nativeStart(this);
         handler.post(runnable);
+    }
+
+    // ----------------------------------------------------------------------------
+    // RC CONTROL SETUP (virtual joystick + gamepad -> RC_CHANNELS_OVERRIDE)
+    // ----------------------------------------------------------------------------
+
+    private void setupRcController() {
+        rcManager = new RcControllerManager(this);
+        rcManager.setDisplayListener((pwm, ok) -> updateRcHud(pwm, ok));
+
+        VirtualJoystickView joystick = binding.rcOverlay.joystickView;
+        joystick.setStickListener(rcManager);
+        joystick.setThrottleSide(rcManager.getThrottleSide());
+        joystick.setOpacity(0.5f);
+
+        gamepad = new GamepadManager();
+        gamepad.setListener(rcManager);
+
+        chVal[0] = binding.rcOverlay.chVal1;
+        chVal[1] = binding.rcOverlay.chVal2;
+        chVal[2] = binding.rcOverlay.chVal3;
+        chVal[3] = binding.rcOverlay.chVal4;
+        chVal[4] = binding.rcOverlay.chVal5;
+        chVal[5] = binding.rcOverlay.chVal6;
+        chVal[6] = binding.rcOverlay.chVal7;
+        chVal[7] = binding.rcOverlay.chVal8;
+
+        binding.rcOverlay.rcOpacity.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                joystick.setOpacity(progress / 100f);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+
+        binding.rcOverlay.rcLock.setOnClickListener(v -> {
+            boolean locked = !joystick.isLocked();
+            joystick.setLocked(locked);
+            binding.rcOverlay.rcLock.setText(locked ? R.string.rc_unlock : R.string.rc_lock);
+        });
+
+        binding.rcOverlay.rcConfig.setOnClickListener(v -> showRcChannelConfigDialog());
+        binding.rcOverlay.rcHide.setOnClickListener(v -> {
+            rcManager.setShowSticks(false);
+            setRcOverlayVisible(false);
+        });
+
+        setRcOverlayVisible(rcManager.isEnabled() && rcManager.isShowSticks());
+        if (rcManager.isEnabled()) {
+            rcManager.start();
+        }
+    }
+
+    private void setRcOverlayVisible(boolean visible) {
+        binding.rcOverlay.getRoot().setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    private void updateRcHud(int[] pwm, boolean ok) {
+        if (chVal[0] == null) return;
+        for (int i = 0; i < 8; i++) {
+            int v = pwm[i];
+            chVal[i].setText(v == 65535 ? "—" : String.valueOf(v));
+        }
+        if (rcManager == null) return;
+        String status;
+        if (rcManager.isGamepadConnected()) {
+            status = getString(R.string.rc_status_gamepad);
+        } else if (!ok) {
+            status = getString(R.string.rc_status_nolink);
+        } else {
+            status = getString(R.string.rc_status_sending);
+        }
+        binding.rcOverlay.rcStatus.setText(status);
+    }
+
+    private void showRcChannelConfigDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        View dialogView = getLayoutInflater().inflate(R.layout.dialog_rc_config, null);
+        LinearLayout list = dialogView.findViewById(R.id.rcChannelList);
+
+        class Row {
+            int ch;
+            CheckBox enabled;
+            CheckBox invert;
+            EditText min;
+            EditText max;
+            EditText center;
+            EditText trim;
+        }
+        java.util.List<Row> rows = new java.util.ArrayList<>();
+
+        for (int i = 1; i <= 8; i++) {
+            final int ch = i;
+            RcControllerManager.ChannelCfg cfg = rcManager.getChannel(ch);
+
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, 8, 0, 8);
+
+            TextView name = new TextView(this);
+            name.setText("CH" + ch);
+            name.setWidth(70);
+            name.setTextColor(getResources().getColor(android.R.color.black));
+
+            Row r = new Row();
+            r.ch = ch;
+            r.enabled = new CheckBox(this);
+            r.enabled.setText(R.string.rc_enabled);
+            r.enabled.setChecked(cfg.enabled);
+            r.invert = new CheckBox(this);
+            r.invert.setText(R.string.rc_invert);
+            r.invert.setChecked(cfg.inverted);
+            r.min = new EditText(this);
+            r.min.setHint(R.string.rc_min);
+            r.min.setText(String.valueOf(cfg.min));
+            r.min.setInputType(InputType.TYPE_CLASS_NUMBER);
+            r.min.setWidth(80);
+            r.max = new EditText(this);
+            r.max.setHint(R.string.rc_max);
+            r.max.setText(String.valueOf(cfg.max));
+            r.max.setInputType(InputType.TYPE_CLASS_NUMBER);
+            r.max.setWidth(80);
+            r.center = new EditText(this);
+            r.center.setHint(R.string.rc_center);
+            r.center.setText(String.valueOf(cfg.center));
+            r.center.setInputType(InputType.TYPE_CLASS_NUMBER);
+            r.center.setWidth(80);
+            r.trim = new EditText(this);
+            r.trim.setHint(R.string.rc_trim);
+            r.trim.setText(String.valueOf(cfg.trim));
+            r.trim.setInputType(InputType.TYPE_CLASS_NUMBER);
+            r.trim.setWidth(70);
+
+            row.addView(name);
+            row.addView(r.enabled);
+            row.addView(r.invert);
+            row.addView(r.min);
+            row.addView(r.max);
+            row.addView(r.center);
+            row.addView(r.trim);
+            list.addView(row);
+            rows.add(r);
+        }
+
+        builder.setView(dialogView);
+        builder.setTitle(R.string.rc_channel_config);
+        builder.setPositiveButton(R.string.rc_done, (dialog, which) -> {
+            for (Row r : rows) {
+                RcControllerManager.ChannelCfg cfg = new RcControllerManager.ChannelCfg();
+                cfg.enabled = r.enabled.isChecked();
+                cfg.inverted = r.invert.isChecked();
+                cfg.min = parseOr(r.min, 1000);
+                cfg.max = parseOr(r.max, 2000);
+                cfg.center = parseOr(r.center, 1500);
+                cfg.trim = parseOr(r.trim, 0);
+                rcManager.setChannel(r.ch, cfg);
+            }
+        });
+        builder.setNegativeButton(android.R.string.cancel, null);
+        builder.show();
+    }
+
+    private int parseOr(EditText e, int fallback) {
+        try {
+            return Integer.parseInt(e.getText().toString().trim());
+        } catch (Exception ex) {
+            return fallback;
+        }
+    }
+
+    private void showRcTargetDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        LinearLayout ll = new LinearLayout(this);
+        ll.setOrientation(LinearLayout.VERTICAL);
+        ll.setPadding(40, 20, 40, 20);
+
+        final EditText ipE = new EditText(this);
+        ipE.setHint(R.string.rc_manual_ip_hint);
+        ipE.setText(rcManager.getManualIp());
+        final EditText portE = new EditText(this);
+        portE.setHint(R.string.rc_manual_port_hint);
+        portE.setInputType(InputType.TYPE_CLASS_NUMBER);
+        portE.setText(String.valueOf(rcManager.getManualPort()));
+
+        ll.addView(ipE);
+        ll.addView(portE);
+        builder.setView(ll);
+        builder.setTitle(R.string.rc_target_manual);
+        builder.setPositiveButton(R.string.rc_apply, (d, w) -> {
+            int port = 14550;
+            try {
+                port = Integer.parseInt(portE.getText().toString().trim());
+            } catch (Exception ignored) {
+            }
+            rcManager.setManualTarget(true, ipE.getText().toString().trim(), port);
+        });
+        builder.setNegativeButton(android.R.string.cancel, null);
+        builder.show();
+    }
+
+    private void setupRcSubMenu(PopupMenu popup) {
+        SubMenu rc = popup.getMenu().addSubMenu(R.string.rc_title);
+
+        MenuItem en = rc.add(rcManager.isEnabled() ? R.string.rc_enable_off : R.string.rc_enable_on);
+        en.setOnMenuItemClickListener(item -> {
+            boolean e = !rcManager.isEnabled();
+            rcManager.setEnabled(e);
+            if (e) setRcOverlayVisible(rcManager.isShowSticks());
+            en.setTitle(e ? R.string.rc_enable_off : R.string.rc_enable_on);
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+
+        MenuItem sticks = rc.add(R.string.rc_show_sticks);
+        sticks.setOnMenuItemClickListener(item -> {
+            boolean show = !rcManager.isShowSticks();
+            rcManager.setShowSticks(show);
+            setRcOverlayVisible(show && rcManager.isEnabled());
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+
+        MenuItem mode = rc.add(getString(R.string.rc_mode) + ": " + rcManager.getMode());
+        mode.setOnMenuItemClickListener(item -> {
+            int m = (rcManager.getMode() == 1) ? 2 : 1;
+            rcManager.setMode(m);
+            binding.rcOverlay.joystickView.setThrottleSide(rcManager.getThrottleSide());
+            mode.setTitle(getString(R.string.rc_mode) + ": " + m);
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+
+        MenuItem rate = rc.add(getString(R.string.rc_rate) + ": " + rcManager.getRateHz() + "Hz");
+        rate.setOnMenuItemClickListener(item -> {
+            int[] opts = {10, 20, 50};
+            int cur = java.util.Arrays.asList(10, 20, 50).indexOf(rcManager.getRateHz());
+            int next = opts[(cur < 0 ? 0 : cur + 1) % 3];
+            rcManager.setRateHz(next);
+            rate.setTitle(getString(R.string.rc_rate) + ": " + next + "Hz");
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+
+        MenuItem tgt = rc.add(rcManager.isManualTarget() ? R.string.rc_target_manual : R.string.rc_target_auto);
+        tgt.setOnMenuItemClickListener(item -> {
+            if (rcManager.isManualTarget()) {
+                rcManager.setManualTarget(false, null, 0);
+                tgt.setTitle(R.string.rc_target_auto);
+            } else {
+                showRcTargetDialog();
+                tgt.setTitle(R.string.rc_target_manual);
+            }
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+
+        MenuItem cfg = rc.add(R.string.rc_channel_config);
+        cfg.setOnMenuItemClickListener(item -> {
+            showRcChannelConfigDialog();
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+
+        MenuItem lock = rc.add(binding.rcOverlay.joystickView.isLocked() ? R.string.rc_unlock : R.string.rc_lock);
+        lock.setOnMenuItemClickListener(item -> {
+            boolean l = !binding.rcOverlay.joystickView.isLocked();
+            binding.rcOverlay.joystickView.setLocked(l);
+            binding.rcOverlay.rcLock.setText(l ? R.string.rc_unlock : R.string.rc_lock);
+            lock.setTitle(l ? R.string.rc_unlock : R.string.rc_lock);
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+    }
+
+    @Override
+    public boolean onGenericMotionEvent(MotionEvent event) {
+        if (gamepad != null && gamepad.onGenericMotionEvent(event)) {
+            return true;
+        }
+        return super.onGenericMotionEvent(event);
     }
 
     // ----------------------------------------------------------------------------
@@ -974,6 +1289,8 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     protected void onPause() {
         super.onPause();
 
+        if (rcManager != null) rcManager.stop();
+
         stopObjectDetectionLoop();
 
         unregisterReceivers();
@@ -1005,6 +1322,8 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         setObjectDetectionEnabled(odEnabled);
 
         osdManager.restoreOSDConfig();
+
+        if (rcManager != null && rcManager.isEnabled()) rcManager.start();
 
         super.onResume();
     }

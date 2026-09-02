@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rcControlOverlay"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:translationZ="20dp"
+    android:visibility="gone">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- Top bar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#80000000"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="6dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/rc_title"
+                android:textColor="@android:color/white"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/rcOpacity"
+                android:layout_width="110dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:max="100"
+                android:progress="50" />
+
+            <Button
+                android:id="@+id/rcLock"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="@string/rc_lock"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/rcConfig"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="@string/rc_config"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/rcHide"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="@string/rc_hide"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/rcStatus"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:text="@string/rc_status_idle"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Joystick area -->
+        <com.openipc.pixelpilot.rc.VirtualJoystickView
+            android:id="@+id/joystickView"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <!-- Channel HUD -->
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#80000000">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:padding="6dp">
+
+                <LinearLayout style="@style/RcChannelBlock">
+                    <TextView style="@style/RcChannelLabel" android:text="CH1" />
+                    <TextView android:id="@+id/chVal1" style="@style/RcChannelValue" android:text="1500" />
+                </LinearLayout>
+                <LinearLayout style="@style/RcChannelBlock">
+                    <TextView style="@style/RcChannelLabel" android:text="CH2" />
+                    <TextView android:id="@+id/chVal2" style="@style/RcChannelValue" android:text="1500" />
+                </LinearLayout>
+                <LinearLayout style="@style/RcChannelBlock">
+                    <TextView style="@style/RcChannelLabel" android:text="CH3" />
+                    <TextView android:id="@+id/chVal3" style="@style/RcChannelValue" android:text="1500" />
+                </LinearLayout>
+                <LinearLayout style="@style/RcChannelBlock">
+                    <TextView style="@style/RcChannelLabel" android:text="CH4" />
+                    <TextView android:id="@+id/chVal4" style="@style/RcChannelValue" android:text="1500" />
+                </LinearLayout>
+                <LinearLayout style="@style/RcChannelBlock">
+                    <TextView style="@style/RcChannelLabel" android:text="CH5" />
+                    <TextView android:id="@+id/chVal5" style="@style/RcChannelValue" android:text="—" />
+                </LinearLayout>
+                <LinearLayout style="@style/RcChannelBlock">
+                    <TextView style="@style/RcChannelLabel" android:text="CH6" />
+                    <TextView android:id="@+id/chVal6" style="@style/RcChannelValue" android:text="—" />
+                </LinearLayout>
+                <LinearLayout style="@style/RcChannelBlock">
+                    <TextView style="@style/RcChannelLabel" android:text="CH7" />
+                    <TextView android:id="@+id/chVal7" style="@style/RcChannelValue" android:text="—" />
+                </LinearLayout>
+                <LinearLayout style="@style/RcChannelBlock">
+                    <TextView style="@style/RcChannelLabel" android:text="CH8" />
+                    <TextView android:id="@+id/chVal8" style="@style/RcChannelValue" android:text="—" />
+                </LinearLayout>
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+</FrameLayout>
