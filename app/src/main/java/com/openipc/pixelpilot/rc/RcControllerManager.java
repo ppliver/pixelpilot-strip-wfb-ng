@@ -86,6 +86,8 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
         this.context = context;
         this.prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         for (int i = 0; i < MAX_CHANNELS; i++) channels[i] = new ChannelCfg();
+        // Throttle (CH3) defaults to inverted so "stick up = more throttle" on a touch TX.
+        channels[2].inverted = true;
         loadConfig();
     }
 
@@ -238,12 +240,18 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
         }
 
         if (gp) {
-            pwm[4] = mapAxis(gpadAux[0] * 2f - 1f, 5); // brake 0..1 -> -1..1
-            pwm[5] = mapAxis(gpadAux[1] * 2f - 1f, 6); // gas
-            pwm[6] = mapAxis(gpadAux[2], 7);           // hat X
-            pwm[7] = mapAxis(gpadAux[3], 8);           // hat Y
+            pwm[4] = auxPwm(5, gpadAux[0] * 2f - 1f); // brake 0..1 -> -1..1
+            pwm[5] = auxPwm(6, gpadAux[1] * 2f - 1f); // gas
+            pwm[6] = auxPwm(7, gpadAux[2]);           // hat X
+            pwm[7] = auxPwm(8, gpadAux[3]);           // hat Y
         }
         return pwm;
+    }
+
+    /** Aux channels are sent as "ignore" when the source axis is at rest. */
+    private int auxPwm(int ch1Based, float norm) {
+        if (Math.abs(norm) < DEADZONE) return 65535;
+        return mapAxis(norm, ch1Based);
     }
 
     private int mapAxis(float raw, int ch1Based) {
