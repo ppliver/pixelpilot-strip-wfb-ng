@@ -99,8 +99,6 @@ public class OSDManager {
         listOSDItems.add(new OSDElement("Timer", binding.itemTimer));
         listOSDItems.add(new OSDElement("Total Distance", binding.itemTotDis));
         listOSDItems.add(new OSDElement("Video Decoding", binding.itemVideoStats));
-        listOSDItems.add(new OSDElement("Video Link Status", binding.itemLinkStatus));
-        listOSDItems.add(new OSDElement("Video Link Status Graph", binding.itemLinkStatusChart));
         restoreOSDConfig();
     }
 

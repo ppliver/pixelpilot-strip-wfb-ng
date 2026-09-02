@@ -1,7 +1,6 @@
 package com.openipc.pixelpilot;
 
 import android.annotation.SuppressLint;
-import android.app.Dialog;
 import android.content.BroadcastReceiver;
 import android.app.ActivityManager;
 import android.content.Context;
@@ -11,12 +10,7 @@ import android.content.SharedPreferences;
 import android.content.UriPermission;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.res.ColorStateList;
-import android.graphics.Color;
-import android.hardware.usb.UsbManager;
 import android.net.Uri;
-import android.net.VpnService;
-import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -25,18 +19,12 @@ import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.text.Editable;
 import android.text.TextWatcher;
-import android.text.format.Formatter;
-import android.util.Base64;
-import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.SubMenu;
 import android.view.View;
 import android.view.WindowManager;
-import android.webkit.HttpAuthHandler;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
 import android.widget.PopupMenu;
 import android.widget.SeekBar;
 import android.widget.Toast;
@@ -48,11 +36,6 @@ import androidx.constraintlayout.widget.ConstraintSet;
 import androidx.core.content.FileProvider;
 import androidx.documentfile.provider.DocumentFile;
 
-import com.github.mikephil.charting.charts.PieChart;
-import com.github.mikephil.charting.data.PieData;
-import com.github.mikephil.charting.data.PieDataSet;
-import com.github.mikephil.charting.data.PieEntry;
-import com.github.mikephil.charting.formatter.PercentFormatter;
 import com.openipc.mavlink.MavlinkData;
 import com.openipc.mavlink.MavlinkNative;
 import com.openipc.mavlink.MavlinkUpdate;
@@ -62,9 +45,6 @@ import com.openipc.pixelpilot.osd.OSDManager;
 import com.openipc.videonative.DecodingInfo;
 import com.openipc.videonative.IVideoParamsChanged;
 import com.openipc.videonative.VideoPlayer;
-import com.openipc.wfbngrtl8812.WfbNGStats;
-import com.openipc.wfbngrtl8812.WfbNGStatsChanged;
-import com.openipc.wfbngrtl8812.WfbNgLink;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -82,7 +62,6 @@ import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
@@ -101,9 +80,8 @@ import java.util.regex.Pattern;
 // Most basic implementation of an activity that uses VideoNative to stream a video
 // Into an Android Surface View
 public class VideoActivity extends AppCompatActivity implements IVideoParamsChanged,
-        WfbNGStatsChanged, MavlinkUpdate, SettingsChanged {
+        MavlinkUpdate {
     private static final String TAG = "pixelpilot";
-    private static final int PICK_KEY_REQUEST_CODE = 1;
     private static final int PICK_DVR_REQUEST_CODE = 2;
     private static final int PICK_MODEL_REQUEST_CODE = 3;
     private static final String MODEL_LITE0_FILE = "efficientdet-lite0.tflite";
@@ -114,7 +92,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     private static final long MODEL_LITE2_BYTES = 23096891L;
     private static final String PREF_OD_CUSTOM_MODEL_URI = "od_custom_model_uri";
     private static final String PREF_OD_CUSTOM_MODEL_NAME = "od_custom_model_name";
-    private static WifiManager wifiManager;
     final Handler handler = new Handler(Looper.getMainLooper());
     final Runnable runnable = new Runnable() {
         public void run() {
@@ -124,7 +101,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     };
     protected DecodingInfo mDecodingInfo;
     int lastVideoW = 0, lastVideoH = 0, lastCodec = 1;
-    WfbLinkManager wfbLinkManager;
     BroadcastReceiver batteryReceiver;
     VideoPlayer videoPlayer;
     private ActivityVideoBinding binding;
@@ -136,7 +112,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     private boolean isVRMode = false;
     private ConstraintLayout constraintLayout;
     private ConstraintSet constraintSet;
-    private WfbNgLink wfbLink;
 
     private ObjectDetectorHelper objectDetectorHelper;
     private ExecutorService objectDetectionExecutor;
@@ -145,8 +120,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     private final Object detectorLock = new Object();
     private Boolean objectDetectionRuntimeSupported = null;
 
-    private static final String PREF_DRONE_USERNAME = "drone_username";
-    private static final String PREF_DRONE_PASSWORD = "drone_password";
     private static final String PREF_DVR_FILENAME = "dvr_filename";
 
     public boolean getVRSetting() {
@@ -160,40 +133,12 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         editor.commit();
     }
 
-    public static int getChannel(Context context) {
-        return context.getSharedPreferences("general",
-                Context.MODE_PRIVATE).getInt("wifi-channel", 161);
-    }
-
-    public static int getBandwidth(Context context) {
-        return context.getSharedPreferences("general",
-                Context.MODE_PRIVATE).getInt("bandwidth", 20);
-    }
-
-    public static String wirelessInfo() {
-        int address = wifiManager.getConnectionInfo().getIpAddress();
-        return (address == 0) ? null : Formatter.formatIpAddress(address);
-    }
-
     static String paddedDigits(int val, int len) {
         StringBuilder sb = new StringBuilder(String.format("%d", val));
         while (sb.length() < len) {
             sb.append('\t');
         }
         return sb.toString();
-    }
-
-    public static String bytesToHex(byte[] bytes) {
-        StringBuilder hexString = new StringBuilder();
-        for (byte b : bytes) {
-            String hex = Integer.toHexString(0xFF & b);
-            if (hex.length() == 1) {
-                // Append a leading zero for single digit hex values
-                hexString.append('0');
-            }
-            hexString.append(hex);
-        }
-        return hexString.toString();
     }
 
     private void resetApp() {
@@ -279,12 +224,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         // UI Setup
         initializeUI();
 
-        // WFB-NG Setup
-        initializeWfbNg();
-
-        // Options like tx power must be initialized explicitly
-        initDefaultOptions();
-
         // Video Player(s) Setup
         initializeVideoPlayers();
 
@@ -294,9 +233,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         // OSD Manager Setup
         setupOSDManager();
 
-        // PieChart Setup
-        setupPieChart();
-
         // Button Handlers
         setupButtonHandlers();
 
@@ -305,9 +241,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         // Battery Receiver
         setupBatteryReceiver();
-
-        // wfbNg VPN Service
-        startVpnService();
     }
 
     // ----------------------------------------------------------------------------
@@ -323,24 +256,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
-
-        wifiManager = (WifiManager) getSystemService(WIFI_SERVICE);
-    }
-
-    // ----------------------------------------------------------------------------
-    // WFB-NG SETUP
-    // ----------------------------------------------------------------------------
-
-    /**
-     * Initializes WFB-NG related logic such as setting default gs.key and linking
-     * to WFB-NG stats changes.
-     */
-    private void initializeWfbNg() {
-        setDefaultGsKey();
-        copyGSKey();
-        wfbLink = new WfbNgLink(this);
-        wfbLink.SetWfbNGStatsChanged(this);
-        wfbLinkManager = new WfbLinkManager(this, binding, wfbLink);
     }
 
     // ----------------------------------------------------------------------------
@@ -536,31 +451,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     }
 
     // ----------------------------------------------------------------------------
-    // PIECHART SETUP
-    // ----------------------------------------------------------------------------
-
-    /**
-     * Initializes and configures the PieChart to show link statistics (initially empty).
-     */
-    private void setupPieChart() {
-        PieChart chart = binding.pcLinkStat;
-        chart.getLegend().setEnabled(false);
-        chart.getDescription().setEnabled(false);
-        chart.setDrawHoleEnabled(true);
-        chart.setHoleColor(Color.WHITE);
-        chart.setHoleRadius(75f);
-        chart.setCenterTextSize(12);
-        chart.setCenterText("RSSI");
-        chart.setHighlightPerTapEnabled(false);
-        chart.setRotationEnabled(false);
-        chart.setClickable(false);
-        chart.setTouchEnabled(false);
-
-        PieData emptyData = new PieData(new PieDataSet(new ArrayList<>(), ""));
-        chart.setData(emptyData);
-    }
-
-    // ----------------------------------------------------------------------------
     // BUTTON HANDLERS
     // ----------------------------------------------------------------------------
 
@@ -581,26 +471,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         // VR submenu
         setupVRSubMenu(popup);
 
-        // Channel submenu
-        setupChannelSubMenu(popup);
-
-        // Bandwidth submenu
-        setupBandwidthSubMenu(popup);
-
-        // OSD submenu
-        setupOSDSubMenu(popup);
-
-        // WFB submenu
-        setupWFBSubMenu(popup);
-
-        // Adaptive link submenu
-        setupAdaptiveLinkSubMenu(popup);
 
         // Recording submenu
         setupRecordingSubMenu(popup);
-
-        // Drone submenu
-        setupDroneSubMenu(popup);
 
         // UDP Forwarding submenu
         setupUdpForwardingSubMenu(popup);
@@ -632,46 +505,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     }
 
     /**
-     * Submenu that lists available channels and allows the user to select one.
-     */
-    private void setupChannelSubMenu(PopupMenu popup) {
-        SubMenu chnMenu = popup.getMenu().addSubMenu("Channel");
-        int channelPref = getChannel(this);
-
-        // Create a disabled item to act as the header
-        MenuItem headerItem = chnMenu.add("Current: " + channelPref);
-        headerItem.setEnabled(false); // Makes it unclickable and grayed out like a label
-
-        String[] channels = getResources().getStringArray(R.array.channels);
-        for (String chnStr : channels) {
-            chnMenu.add(chnStr).setOnMenuItemClickListener(item -> {
-                onChannelSettingChanged(Integer.parseInt(chnStr));
-                return true;
-            });
-        }
-    }
-
-    /**
-     * Submenu that allows the user to select 20 or 40 MHz bandwidth.
-     */
-    private void setupBandwidthSubMenu(PopupMenu popup) {
-        SubMenu bwMenu = popup.getMenu().addSubMenu("Bandwidth");
-        int bandwidthPref = getBandwidth(this);
-
-        // Add a disabled item to act as the header
-        MenuItem headerItem = bwMenu.add("Current: " + bandwidthPref);
-        headerItem.setEnabled(false); // Visually looks like a header, but unclickable
-
-        String[] bws = getResources().getStringArray(R.array.bandwidths);
-        for (String bwStr : bws) {
-            bwMenu.add(bwStr).setOnMenuItemClickListener(item -> {
-                onBandwidthSettingChanged(Integer.parseInt(bwStr));
-                return true;
-            });
-        }
-    }
-
-    /**
      * Submenu handling OSD toggles and locks.
      */
     private void setupOSDSubMenu(PopupMenu popup) {
@@ -696,217 +529,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
                 menuItem.setActionView(new View(this));
                 return false;
             });
-        }
-    }
-
-    /**
-     * Submenu handling WFB-NG logic (e.g. selecting gs.key from storage).
-     */
-    private void setupWFBSubMenu(PopupMenu popup) {
-        SubMenu wfb = popup.getMenu().addSubMenu("WFB-NG key");
-        MenuItem keyBtn = wfb.add("gs.key");
-        keyBtn.setOnMenuItemClickListener(item -> {
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("*/*");
-            startActivityForResult(intent, PICK_KEY_REQUEST_CODE);
-            return true;
-        });
-    }
-
-    /**
-     * Submenu for Adaptive link functionality.
-     * It creates two options:
-     * - "Enable": toggles the adaptive link quality thread
-     * - "Power": a submenu that lets the user choose the TX power (1, 10, 20, 30, 40)
-     */
-    private void setupAdaptiveLinkSubMenu(PopupMenu popup) {
-        SubMenu adaptiveMenu = popup.getMenu().addSubMenu("Adaptive link");
-
-        SharedPreferences prefs = getSharedPreferences("general", MODE_PRIVATE);
-        boolean adaptiveEnabled = prefs.getBoolean("adaptive_link_enabled", true);
-        int adaptiveTxPower = prefs.getInt("adaptive_tx_power", 20);
-
-        // Adaptive link Enable option
-        MenuItem adaptiveEnable = adaptiveMenu.add("Enable");
-        adaptiveEnable.setCheckable(true);
-        adaptiveEnable.setChecked(adaptiveEnabled);
-        adaptiveEnable.setOnMenuItemClickListener(item -> {
-            boolean newState = !item.isChecked();
-            item.setChecked(newState);
-            SharedPreferences.Editor editor = getSharedPreferences("general", MODE_PRIVATE).edit();
-            editor.putBoolean("adaptive_link_enabled", newState);
-            editor.apply();
-            // Call instance method on the WfbNgLink instance via the wfbLinkManager.
-            wfbLink.nativeSetAdaptiveLinkEnabled(newState);
-            return true;
-        });
-
-        // Adaptive link Power submenu
-        SubMenu powerSubMenu = adaptiveMenu.addSubMenu("Power");
-        int[] txOptions = {1, 10, 20, 30, 40};
-        for (int power : txOptions) {
-            MenuItem powerItem = powerSubMenu.add(String.valueOf(power));
-            powerItem.setCheckable(true);
-            if (power == adaptiveTxPower) {
-                powerItem.setChecked(true);
-            }
-            powerItem.setOnMenuItemClickListener(item -> {
-                // Uncheck all items in the submenu
-                for (int i = 0; i < powerSubMenu.size(); i++) {
-                    powerSubMenu.getItem(i).setChecked(false);
-                }
-                item.setChecked(true);
-                SharedPreferences.Editor editor = getSharedPreferences("general", MODE_PRIVATE).edit();
-                editor.putInt("adaptive_tx_power", power);
-                editor.apply();
-                // Call instance method on the WfbNgLink instance via the wfbLinkManager.
-                wfbLink.nativeSetTxPower(power);
-                return true;
-            });
-        }
-
-        // Adaptive use FEC submenu
-        boolean fecEnabled = prefs.getBoolean("custom_fec_enabled", true);
-
-        MenuItem fecEnable = adaptiveMenu.add("FEC");
-        fecEnable.setCheckable(true);
-        fecEnable.setChecked(fecEnabled);
-        fecEnable.setOnMenuItemClickListener(item -> {
-            boolean newState = !item.isChecked();
-            item.setChecked(newState);
-            SharedPreferences.Editor editor = getSharedPreferences("general", MODE_PRIVATE).edit();
-            editor.putBoolean("custom_fec_enabled", newState);
-            editor.apply();
-            // Call instance method on the WfbNgLink instance via the wfbLinkManager.
-            wfbLink.nativeSetUseFec(newState ? 1 : 0);
-            return true;
-        });
-
-        // LDPC option
-        boolean ldpcEnabled = prefs.getBoolean("custom_ldpc_enabled", true);
-        MenuItem ldpcEnable = adaptiveMenu.add("LDPC");
-        ldpcEnable.setCheckable(true);
-        ldpcEnable.setChecked(ldpcEnabled);
-        ldpcEnable.setOnMenuItemClickListener(item -> {
-            boolean newState = !item.isChecked();
-            item.setChecked(newState);
-            SharedPreferences.Editor editor = getSharedPreferences("general", MODE_PRIVATE).edit();
-            editor.putBoolean("custom_ldpc_enabled", newState);
-            editor.apply();
-            wfbLink.nativeSetUseLdpc(newState ? 1 : 0);
-            return true;
-        });
-
-        // STBC option
-        boolean stbcEnabled = prefs.getBoolean("custom_stbc_enabled", true);
-        MenuItem stbcEnable = adaptiveMenu.add("STBC");
-        stbcEnable.setCheckable(true);
-        stbcEnable.setChecked(stbcEnabled);
-        stbcEnable.setOnMenuItemClickListener(item -> {
-            boolean newState = !item.isChecked();
-            item.setChecked(newState);
-            SharedPreferences.Editor editor = getSharedPreferences("general", MODE_PRIVATE).edit();
-            editor.putBoolean("custom_stbc_enabled", newState);
-            editor.apply();
-            wfbLink.nativeSetUseStbc(newState ? 1 : 0);
-            return true;
-        });
-
-        // --- FEC Thresholds menu (single dialog for all 5 settings) ---
-        adaptiveMenu.add("FEC thresholds...").setOnMenuItemClickListener(item -> {
-            showFecThresholdsDialog();
-            return true;
-        });
-    }
-
-    // Show dialog to configure FEC thresholds for all levels
-    private void showFecThresholdsDialog() {
-        SharedPreferences prefs = getSharedPreferences("general", MODE_PRIVATE);
-        int lostTo5 = prefs.getInt("fec_lost_to_5", 2);
-        int recTo4 = prefs.getInt("fec_recovered_to_4", 30);
-        int recTo3 = prefs.getInt("fec_recovered_to_3", 24);
-        int recTo2 = prefs.getInt("fec_recovered_to_2", 14);
-        int recTo1 = prefs.getInt("fec_recovered_to_1", 8);
-
-        android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
-        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
-        final android.widget.EditText[] edits = new android.widget.EditText[5];
-        String[] labels = {
-                "Lost packets/sec for FEC 5", "Recovered/sec for FEC 4", "Recovered/sec for FEC 3",
-                "Recovered/sec for FEC 2", "Recovered/sec for FEC 1"
-        };
-        int[] values = {lostTo5, recTo4, recTo3, recTo2, recTo1};
-        for (int i = 0; i < 5; i++) {
-            android.widget.TextView tv = new android.widget.TextView(this);
-            tv.setText(labels[i]);
-            layout.addView(tv);
-            edits[i] = new android.widget.EditText(this);
-            edits[i].setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-            edits[i].setText(String.valueOf(values[i]));
-            layout.addView(edits[i]);
-        }
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("FEC thresholds")
-                .setView(layout)
-                .setPositiveButton("OK", (dialog, which) -> {
-                    SharedPreferences.Editor editor = prefs.edit();
-                    try {
-                        editor.putInt("fec_lost_to_5", Integer.parseInt(edits[0].getText().toString()));
-                    } catch (Exception ignored) {
-                    }
-                    try {
-                        editor.putInt("fec_recovered_to_4", Integer.parseInt(edits[1].getText().toString()));
-                    } catch (Exception ignored) {
-                    }
-                    try {
-                        editor.putInt("fec_recovered_to_3", Integer.parseInt(edits[2].getText().toString()));
-                    } catch (Exception ignored) {
-                    }
-                    try {
-                        editor.putInt("fec_recovered_to_2", Integer.parseInt(edits[3].getText().toString()));
-                    } catch (Exception ignored) {
-                    }
-                    try {
-                        editor.putInt("fec_recovered_to_1", Integer.parseInt(edits[4].getText().toString()));
-                    } catch (Exception ignored) {
-                    }
-                    editor.apply();
-                    setFecThresholdsFromPrefs();
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
-    }
-
-    void initDefaultOptions() {
-        SharedPreferences prefs = getSharedPreferences("general", MODE_PRIVATE);
-        boolean adaptiveEnabled = prefs.getBoolean("adaptive_link_enabled", true);
-        int adaptiveTxPower = prefs.getInt("adaptive_tx_power", 20);
-        wfbLink.nativeSetAdaptiveLinkEnabled(adaptiveEnabled);
-        wfbLink.nativeSetTxPower(adaptiveTxPower);
-        boolean fecEnabled = prefs.getBoolean("custom_fec_enabled", true);
-        wfbLink.nativeSetUseFec(fecEnabled ? 1 : 0);
-
-        // LDPC and STBC default options
-        boolean ldpcEnabled = prefs.getBoolean("custom_ldpc_enabled", true);
-        wfbLink.nativeSetUseLdpc(ldpcEnabled ? 1 : 0);
-
-        boolean stbcEnabled = prefs.getBoolean("custom_stbc_enabled", true);
-        wfbLink.nativeSetUseStbc(stbcEnabled ? 1 : 0);
-
-        setFecThresholdsFromPrefs();
-    }
-
-    // Read FEC thresholds from prefs and call native method to apply
-    private void setFecThresholdsFromPrefs() {
-        SharedPreferences prefs = getSharedPreferences("general", MODE_PRIVATE);
-        int lostTo5 = prefs.getInt("fec_lost_to_5", 2);
-        int recTo4 = prefs.getInt("fec_recovered_to_4", 30);
-        int recTo3 = prefs.getInt("fec_recovered_to_3", 24);
-        int recTo2 = prefs.getInt("fec_recovered_to_2", 14);
-        int recTo1 = prefs.getInt("fec_recovered_to_1", 8);
-        if (wfbLink != null) {
-            wfbLink.setFecThresholds(lostTo5, recTo4, recTo3, recTo2, recTo1);
         }
     }
 
@@ -950,22 +572,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     /**
      * Submenu for drone settings.
      */
-    private void setupDroneSubMenu(PopupMenu popup) {
-        SubMenu drone = popup.getMenu().addSubMenu("Drone");
-        MenuItem settings = drone.add("Settings");
-        settings.setOnMenuItemClickListener(item -> {
-            startBrowser();
-            return true;
-        });
-
-        // Add a new option to manage login credentials
-        MenuItem loginCredentials = drone.add("Login Credentials");
-        loginCredentials.setOnMenuItemClickListener(item -> {
-            showLoginCredentialsDialog();
-            return true;
-        });
-    }
-
     private void setupUdpForwardingSubMenu(PopupMenu popup) {
         SubMenu forwardMenu = popup.getMenu().addSubMenu("UDP Forwarding");
 
@@ -1196,22 +802,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         }
     }
 
-    // ----------------------------------------------------------------------------
-    // VPN SERVICE
-    // ----------------------------------------------------------------------------
-    private void startVpnService() {
-        int VPN_REQUEST_CODE = 100;
-
-        Intent intent = VpnService.prepare(this);
-        if (intent != null) {
-            startActivityForResult(intent, VPN_REQUEST_CODE);
-        } else {
-            Intent serviceIntent = new Intent(this, WfbNgVpnService.class);
-            startService(serviceIntent);
-        }
-
-    }
-
     private Uri openDvrFile() {
         String dvrFolder = getSharedPreferences("general",
                 Context.MODE_PRIVATE).getString("dvr_folder_", "");
@@ -1239,7 +829,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
             if (dvrUri != null) {
                 startDvr(dvrUri);
             } else {
-                wfbLinkManager.stopAdapters();
                 videoPlayer.stop();
                 videoPlayer.stopAudio();
 
@@ -1322,21 +911,7 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == PICK_KEY_REQUEST_CODE && resultCode == RESULT_OK) {
-            if (data != null && data.getData() != null) {
-                Uri uri = data.getData();
-                Log.d(TAG, "Selected file " + uri);
-                try {
-                    InputStream inputStream = getContentResolver().openInputStream(uri);
-                    setGsKey(inputStream);
-                    copyGSKey();
-                    wfbLinkManager.refreshKey();
-                    inputStream.close();
-                } catch (IOException e) {
-                    Log.e(TAG, "Failed to import gs.key from " + uri);
-                }
-            }
-        } else if (requestCode == PICK_DVR_REQUEST_CODE && resultCode == RESULT_OK) {
+        if (requestCode == PICK_DVR_REQUEST_CODE && resultCode == RESULT_OK) {
             // The result data contains a URI for the document or directory that
             // the user selected.
             Uri uri;
@@ -1361,51 +936,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
             if (data != null && data.getData() != null) {
                 handleSelectedModelUri(data);
             }
-        } else if (requestCode == 100) {  // VPN_REQUEST_CODE is 100
-            if (resultCode == RESULT_OK) {
-                // VPN permission granted, start the VPN service
-                Intent serviceIntent = new Intent(this, WfbNgVpnService.class);
-                startService(serviceIntent);
-            } else {
-                // VPN permission not granted
-                Log.e(TAG, "VPN permission was not granted by the user.");
-            }
         } else {
             Log.w(TAG, "onActivityResult: unknown request code " + requestCode);
         }
-    }
-
-    public void setDefaultGsKey() {
-        if (getGsKey().length > 0) {
-            Log.d(TAG, "gs.key already saved in preferences.");
-            return;
-        }
-        try {
-            Log.d(TAG, "Importing default gs.key...");
-            InputStream inputStream = getAssets().open("gs.key");
-            setGsKey(inputStream);
-            inputStream.close();
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to import default gs.key");
-        }
-    }
-
-    public byte[] getGsKey() {
-        String pref = getSharedPreferences("general", Context.MODE_PRIVATE).getString("gs.key", "");
-        return Base64.decode(pref, Base64.DEFAULT);
-    }
-
-    public void setGsKey(InputStream inputStream) throws IOException {
-        ByteArrayOutputStream result = new ByteArrayOutputStream();
-        byte[] buffer = new byte[1024];
-        int length;
-        while ((length = inputStream.read(buffer)) != -1) {
-            result.write(buffer, 0, length);
-        }
-        SharedPreferences prefs = getSharedPreferences("general", Context.MODE_PRIVATE);
-        SharedPreferences.Editor editor = prefs.edit();
-        editor.putString("gs.key", Base64.encodeToString(result.toByteArray(), Base64.DEFAULT));
-        editor.apply();
     }
 
     public boolean getDvrMP4() {
@@ -1421,26 +954,16 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     public void registerReceivers() {
-        IntentFilter usbFilter = new IntentFilter();
-        usbFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
-        usbFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
-        usbFilter.addAction(WfbLinkManager.ACTION_USB_PERMISSION);
         IntentFilter batFilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
 
         if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(wfbLinkManager, usbFilter, Context.RECEIVER_NOT_EXPORTED);
             registerReceiver(batteryReceiver, batFilter, Context.RECEIVER_NOT_EXPORTED);
         } else {
-            registerReceiver(wfbLinkManager, usbFilter);
             registerReceiver(batteryReceiver, batFilter);
         }
     }
 
     public void unregisterReceivers() {
-        try {
-            unregisterReceiver(wfbLinkManager);
-        } catch (IllegalArgumentException ignored) {
-        }
         try {
             unregisterReceiver(batteryReceiver);
         } catch (IllegalArgumentException ignored) {
@@ -1457,13 +980,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         videoPlayer.stop();
         videoPlayer.stopAudio();
-        wfbLinkManager.stopAdapters();
-
-        // Stop VPN service
-        Log.w(TAG, "onPause: stopping service");
-        Intent intent = new Intent(this, WfbNgVpnService.class);
-        intent.setAction("STOP_SERVICE");
-        startService(intent);
     }
 
     @Override
@@ -1471,7 +987,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         MavlinkNative.nativeStop(this);
         handler.removeCallbacks(runnable);
         unregisterReceivers();
-        wfbLinkManager.stopAdapters();
         videoPlayer.stop();
         videoPlayer.stopAudio();
         super.onStop();
@@ -1481,13 +996,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     protected void onResume() {
         registerReceivers();
 
-        wfbLinkManager.setChannel(getChannel(this));
-        wfbLinkManager.setBandwidth(getBandwidth(this));
-
-        // On resume is called when the app is reopened, a device might have been plugged since the last time it started.
-        wfbLinkManager.refreshAdapters();
-
-        wfbLinkManager.startAdapters();
         videoPlayer.start();
         updateUdpForwardingState();
         videoPlayer.startAudio();
@@ -1498,40 +1006,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         osdManager.restoreOSDConfig();
 
-        startVpnService();
-
         super.onResume();
     }
 
-    @Override
-    public void onChannelSettingChanged(int channel) {
-        int currentChannel = getChannel(this);
-        if (currentChannel == channel) {
-            return;
-        }
-        SharedPreferences prefs = getSharedPreferences("general", Context.MODE_PRIVATE);
-        SharedPreferences.Editor editor = prefs.edit();
-        editor.putInt("wifi-channel", channel);
-        editor.apply();
-        wfbLinkManager.stopAdapters();
-        wfbLinkManager.setChannel(channel);
-        wfbLinkManager.startAdapters();
-    }
-
-    @Override
-    public void onBandwidthSettingChanged(int bandwidth) {
-        int currentBandwidth = getBandwidth(this);
-        if (currentBandwidth == bandwidth) {
-            return;
-        }
-        SharedPreferences prefs = getSharedPreferences("general", Context.MODE_PRIVATE);
-        SharedPreferences.Editor editor = prefs.edit();
-        editor.putInt("bandwidth", bandwidth);
-        editor.apply();
-        wfbLinkManager.stopAdapters();
-        wfbLinkManager.setBandwidth(bandwidth);
-        wfbLinkManager.startAdapters();
-    }
 
     @Override
     public void onVideoRatioChanged(final int videoW, final int videoH) {
@@ -1570,7 +1047,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
             }
             if (decodingInfo.currentFPS > 0) {
                 binding.tvMessage.setVisibility(View.GONE);
-                binding.wifiMessage.setVisibility(View.GONE);
             }
             String info = "%dx%d@%.0f " + (decodingInfo.nCodec == 1 ? " H265 " : " H264 ")
                     + (decodingInfo.currentKiloBitsPerSecond > 1000 ? " %.1fMbps " : " %.1fKpbs ")
@@ -1583,150 +1059,8 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     }
 
     @Override
-    public void onWfbNgStatsChanged(WfbNGStats data) {
-        runOnUiThread(() -> {
-            if (data.count_p_all > 0) {
-                binding.tvMessage.setVisibility(View.INVISIBLE);
-                binding.tvMessage.setText("");
-
-                if (data.count_p_dec_err > 0) {
-                    binding.tvLinkStatus.setText("Waiting for session key.");
-                } else {
-                    // NOTE: The order of the entries when being added to the entries array
-                    // determines their position around the center of the chart.
-                    ArrayList<PieEntry> entries = new ArrayList<>();
-                    entries.add(new PieEntry((float) data.count_p_dec_ok / data.count_p_all));
-                    entries.add(new PieEntry((float) data.count_p_fec_recovered / data.count_p_all));
-                    entries.add(new PieEntry((float) data.count_p_lost / data.count_p_all));
-
-                    PieDataSet dataSet = new PieDataSet(entries, "Link Status");
-                    dataSet.setDrawIcons(false);
-                    dataSet.setDrawValues(false);
-
-                    ArrayList<Integer> colors = new ArrayList<>();
-                    colors.add(getColor(R.color.colorGreen));
-                    colors.add(getColor(R.color.colorYellow));
-                    colors.add(getColor(R.color.colorRed));
-                    dataSet.setColors(colors);
-
-                    PieData pieData = new PieData(dataSet);
-                    pieData.setValueFormatter(new PercentFormatter());
-                    pieData.setValueTextSize(11f);
-                    pieData.setValueTextColor(Color.WHITE);
-
-                    int rssiColor = getColor(R.color.colorGreenBg);
-                    if (data.avg_rssi < 60 && 30 <= data.avg_rssi) {
-                        rssiColor = getColor(R.color.colorYellow);
-                    } else if (data.avg_rssi < 30) {
-                        rssiColor = getColor(R.color.colorRed);
-                    }
-
-                    binding.pcLinkStat.setData(pieData);
-                    binding.pcLinkStat.setCenterTextSize(22);
-                    binding.pcLinkStat.setCenterText("" + data.avg_rssi);
-                    binding.pcLinkStat.setCenterTextColor(rssiColor);
-                    binding.pcLinkStat.invalidate();
-
-                    // Set link icon tint color.
-                    int color = getColor(R.color.colorGreenBg);
-                    if ((float) data.count_p_fec_recovered / data.count_p_all > 0.2) {
-                        color = getColor(R.color.colorYellowBg);
-                    }
-                    if (data.count_p_lost > 0) {
-                        color = getColor(R.color.colorRedBg);
-                    }
-                    binding.imgLinkStatus.setImageTintList(ColorStateList.valueOf(color));
-
-                    binding.tvLinkStatus.setText(String.format("Outgoing %3d Decoded %3d Recovered %3d Lost %3d",
-                            data.count_p_outgoing,
-                            data.count_p_dec_ok,
-                            data.count_p_fec_recovered,
-                            data.count_p_lost));
-                }
-            } else {
-                binding.tvLinkStatus.setText("No Video Link");
-            }
-        });
-    }
-
-    @Override
     public void onNewMavlinkData(MavlinkData data) {
         runOnUiThread(() -> osdManager.render(data));
-    }
-
-    private void copyGSKey() {
-        File file = new File(getApplicationContext().getFilesDir(), "gs.key");
-        OutputStream out = null;
-        try {
-            byte[] keyBytes = getGsKey();
-            Log.d(TAG, "Using gs.key:" + bytesToHex(keyBytes) + "; Copying to" + file.getAbsolutePath());
-            out = new FileOutputStream(file);
-            out.write(keyBytes, 0, keyBytes.length);
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to copy asset", e);
-        } finally {
-            if (out != null) {
-                try {
-                    out.close();
-                } catch (IOException e) {
-                    // NOOP
-                }
-            }
-        }
-    }
-
-    private void showLoginCredentialsDialog() {
-        // Create a LinearLayout to hold our EditText fields
-        android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
-        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
-        layout.setPadding(50, 30, 50, 30); // Add some padding around the content
-
-        // EditText for username
-        final android.widget.EditText usernameEditText = new android.widget.EditText(this);
-        usernameEditText.setHint("Username");
-        usernameEditText.setText(getDroneUsername()); // Pre-fill with current saved username
-        layout.addView(usernameEditText);
-
-        // EditText for password
-        final android.widget.EditText passwordEditText = new android.widget.EditText(this);
-        passwordEditText.setHint("Password");
-        // Mask the password input
-        passwordEditText.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        passwordEditText.setText(getDronePassword()); // Pre-fill with current saved password
-        layout.addView(passwordEditText);
-
-        // CheckBox to toggle password visibility
-        final android.widget.CheckBox showPasswordCheckBox = new android.widget.CheckBox(this);
-        showPasswordCheckBox.setText("Show Password");
-        layout.addView(showPasswordCheckBox);
-
-        // Set a listener for the CheckBox
-        showPasswordCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (isChecked) {
-                // If checked, show the password (visible_password)
-                passwordEditText.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
-            } else {
-                // If unchecked, hide the password (password)
-                passwordEditText.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-            }
-            // Move the cursor to the end of the text to prevent it from jumping to the beginning
-            passwordEditText.setSelection(passwordEditText.getText().length());
-        });
-
-        // Build and show the AlertDialog
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("Drone Login Credentials")
-                .setView(layout) // Set our custom layout
-                .setPositiveButton("Save", (dialog, which) -> {
-                    // Save the new values to SharedPreferences
-                    setDroneUsername(usernameEditText.getText().toString());
-                    setDronePassword(passwordEditText.getText().toString());
-                    Toast.makeText(this, "Drone credentials saved.", Toast.LENGTH_SHORT).show();
-                })
-                .setNegativeButton("Cancel", (dialog, which) -> {
-                    dialog.cancel(); // Dismiss the dialog
-                })
-                .show();
     }
 
     private void showEditFileNameTemplateDialog() {
@@ -1795,23 +1129,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         return "pixelpilot_" + fallbackTime;
     }
 
-    // Helper method to retrieve the drone username
-    // Provides a default "root" if not yet set, for initial compatibility.
-    private String getDroneUsername() {
-        return getSharedPreferences("general", Context.MODE_PRIVATE).getString(PREF_DRONE_USERNAME, "root");
-    }
-
     private String getDvrFileNameTemplate()
     {
         return getSharedPreferences("general", Context.MODE_PRIVATE).getString(PREF_DVR_FILENAME, "pixelpilot_[yyyyMMdd-HHmmss]");
-    }
-
-    // Helper method to save the drone username
-    private void setDroneUsername(String username) {
-        SharedPreferences prefs = getSharedPreferences("general", Context.MODE_PRIVATE);
-        SharedPreferences.Editor editor = prefs.edit();
-        editor.putString(PREF_DRONE_USERNAME, username);
-        editor.apply();
     }
 
     private void setDvrFileName(String fileName) {
@@ -1819,51 +1139,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         SharedPreferences.Editor editor = prefs.edit();
         editor.putString(PREF_DVR_FILENAME, fileName);
         editor.apply();
-    }
-
-    // Helper method to retrieve the drone password
-    // Provides a default "12345" if not yet set, for initial compatibility.
-    private String getDronePassword() {
-        return getSharedPreferences("general", Context.MODE_PRIVATE).getString(PREF_DRONE_PASSWORD, "12345");
-    }
-
-    // Helper method to save the drone password
-    private void setDronePassword(String password) {
-        SharedPreferences prefs = getSharedPreferences("general", Context.MODE_PRIVATE);
-        SharedPreferences.Editor editor = prefs.edit();
-        editor.putString(PREF_DRONE_PASSWORD, password);
-        editor.apply();
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    public void startBrowser() {
-        WebView view = new WebView(this);
-        view.setWebViewClient(new WebViewClient());
-        view.getSettings().setJavaScriptEnabled(true);
-        view.loadUrl("10.5.0.10");
-
-        Dialog dialog = new Dialog(this);
-        dialog.setContentView(view);
-        dialog.setCanceledOnTouchOutside(true);
-
-        DisplayMetrics displayMetrics = new DisplayMetrics();
-        getWindowManager().getDefaultDisplay().getMetrics(displayMetrics);
-        int screenWidth = (int) (displayMetrics.widthPixels * 0.75);
-        if (dialog.getWindow() != null) {
-            dialog.getWindow().setLayout(screenWidth, WindowManager.LayoutParams.MATCH_PARENT);
-        }
-        dialog.show();
-
-        view.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onReceivedHttpAuthRequest(
-                    WebView view, HttpAuthHandler handler, String host, String realm) {
-                // Retrieve username and password from SharedPreferences
-                String username = getDroneUsername();
-                String password = getDronePassword();
-                handler.proceed(username, password);
-            }
-        });
     }
 
     private void setupObjectDetectionSubMenu(PopupMenu popup) {

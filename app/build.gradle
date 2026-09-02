@@ -58,10 +58,8 @@ android {
 dependencies {
     implementation(project(":app:mavlink"))
     implementation(project(":app:videonative"))
-    implementation(project(":app:wfbngrtl8812"))
 
     implementation(libs.appcompat)
     implementation(libs.material)
-    implementation(libs.philjay.mpandroidchart)
     implementation(libs.mediapipe.tasks.vision)
 }

@@ -12,15 +12,20 @@ where (brace yourself) most things actually work.
 ```
 
 - [FPVue_android](https://github.com/gehee/FPVue_android): basic and unique work to combine all components into a single application by [Gee He](https://github.com/gehee).
-- [devourer](https://github.com/openipc/devourer): userspace Realtek 11ac driver (rtl8812au + rtl8812eu) initially created by [buldo](https://github.com/buldo) and converted to C by [josephnef](https://github.com/josephnef).
 - [LiveVideo10ms](https://github.com/Consti10/LiveVideo10ms): excellent video decoder from [Consti10](https://github.com/Consti10) converted into a module.
-- [wfb-ng](https://github.com/svpcom/wfb-ng): library allowing the broadcast of the video feed over the air.
 
-The wfb-ng [gs.key](https://github.com/OpenIPC/PixelPilot/raw/master/app/src/main/assets/gs.key) is embedded in the app.
-The settings menu allows selecting a different key from your phone.
+This build is a **wfb-ng / Realtek WiFi adapter free** variant: the wfb-ng air link, the
+devourer rtl8812au/rtl8812eu userspace driver, the Android `VpnService` tunnel and the
+`gs.key` handling have all been removed. Video is decoded straight from a plain UDP/RTP
+stream, telemetry straight from plain MAVLink UDP.
 
-Supported rtl8812au and rtl8812eu wifi adapters are listed [here](https://github.com/OpenIPC/PixelPilot/blob/master/app/src/main/res/xml/usb_device_filter.xml).
-Feel free to send pull requests to add new supported wifi adapters hardware IDs.
+| Stream | Transport | Notes |
+|--------|-----------|-------|
+| Video | UDP **:5600** (RTP H264/H265, or raw) | bound on `0.0.0.0`, so it works over WiFi / Ethernet / USB tethering |
+| Telemetry | UDP **:14550** (MAVLink 1/2) | feeds the OSD |
+
+Point your camera (or any encoder) at your phone's IP address on port 5600 and it will
+decode; send MAVLink to port 14550 for the OSD.
 
 Now support saving a dvr of the video feed to `Files/Internal Storage/Movies/`
 
@@ -31,8 +36,6 @@ Now support saving a dvr of the video feed to `Files/Internal Storage/Movies/`
 ```
 git clone https://github.com/OpenIPC/PixelPilot.git
 cd PixelPilot
-git submodule init
-git submodule update
 ```
 
 The project can then be opened in android studio and built from there.
@@ -120,11 +123,9 @@ PixelPilot features an optional, real-time object detection overlay using Google
 ---
 
 ## List of potential improvements:
- * adaptive link [x]
- * 40 MHz bandwidth [?] - works but buggy
  * support stream over ipv6
  * Save audio stream with the video for recordings
- * Possibility to forward undecoded wfb stream over the network
+ * Make the video/telemetry UDP ports configurable
 
 ## Known issues:
  * Audio stream is not working

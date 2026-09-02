@@ -92,19 +92,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <TextView
-        android:id="@+id/wifi_message"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textColor="@color/colorWhite"
-        android:textSize="24sp"
-        android:translationY="28dp"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
     <FrameLayout
         android:id="@+id/osdLayout"
         android:layout_width="0dp"
@@ -159,44 +146,6 @@
                 android:visibility="invisible" />
         </com.openipc.pixelpilot.osd.MovableLayout>
 
-        <com.openipc.pixelpilot.osd.MovableLayout
-            android:id="@+id/itemLinkStatusChart"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="start"
-            android:orientation="horizontal"
-            android:visibility="visible">
-
-            <com.github.mikephil.charting.charts.PieChart
-                android:id="@+id/pcLinkStat"
-                android:layout_width="65dp"
-                android:layout_height="65dp" />
-        </com.openipc.pixelpilot.osd.MovableLayout>
-
-        <com.openipc.pixelpilot.osd.MovableLayout
-            android:id="@+id/itemLinkStatus"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="start"
-            android:orientation="horizontal"
-            android:visibility="visible">
-
-            <ImageView
-                android:id="@+id/imgLinkStatus"
-                android:layout_width="16dp"
-                android:layout_height="38dp"
-                android:src="@drawable/baseline_import_export_24" />
-
-            <TextView
-                android:id="@+id/tvLinkStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:layout_marginStart="5dp"
-                android:gravity="start|center_vertical"
-                android:text="Link Status"
-                android:textColor="@color/colorWhite"
-                android:textSize="14sp" />
-        </com.openipc.pixelpilot.osd.MovableLayout>
 
         <com.openipc.pixelpilot.osd.MovableLayout
             android:id="@+id/itemSat"
