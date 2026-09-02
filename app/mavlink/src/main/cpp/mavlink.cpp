@@ -71,6 +71,9 @@ static bool g_has_manual_target = false;
 static const uint8_t RC_SRC_SYSID = 255;
 static const uint8_t RC_SRC_COMPID = 240;     // MAV_COMP_ID_UDP_BRIDGE
 
+// Throttled confirmation counter (logcat prints every 100 sends ~5s @20Hz)
+static long g_rc_send_seq = 0;
+
 void *listen(int mavlink_port) {
     __android_log_print(ANDROID_LOG_DEBUG, TAG, "Starting mavlink thread...");
     // Create socket
@@ -400,6 +403,12 @@ Java_com_openipc_mavlink_MavlinkNative_nativeSendRcChannels(JNIEnv *env, jclass 
     if (sent != (ssize_t) mlen) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "RC send failed: %s", strerror(errno));
         return JNI_FALSE;
+    }
+    // Throttled positive confirmation for logcat verification (every 100 sends ~5s @20Hz).
+    if ((++g_rc_send_seq % 100) == 0) {
+        __android_log_print(ANDROID_LOG_INFO, TAG,
+                            "RC_CHANNELS_OVERRIDE sent x%ld -> %s:%d",
+                            g_rc_send_seq, inet_ntoa(target.sin_addr), ntohs(target.sin_port));
     }
     return JNI_TRUE;
 }
