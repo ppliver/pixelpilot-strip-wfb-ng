@@ -38,8 +38,10 @@ adb shell am start -n com.openipc.pixelpilot/.VideoActivity >nul 2>nul
 
 echo.
 echo [verify_rc] logcat filter (pixelpilot, info). In-app: enable RC, move
-echo [verify_rc] sticks or a gamepad. Expected line:
-echo [verify_rc]   "RC_CHANNELS_OVERRIDE sent xN -> IP:PORT"
+echo [verify_rc] sticks or a gamepad. Expected lines:
+echo [verify_rc]   "RC_CHANNELS_OVERRIDE sent xN -> IP:PORT"  (we transmitted)
+echo [verify_rc]   "RC echo OK: FC applied override (xN)"      (FC accepted it)
+echo [verify_rc]   "RC echo MISMATCH xN: K ch differ ..."      (FC ignored/changed)
 echo [verify_rc] Press Ctrl+C to stop.
 echo.
 

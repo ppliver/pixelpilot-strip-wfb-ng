@@ -74,6 +74,13 @@ static const uint8_t RC_SRC_COMPID = 240;     // MAV_COMP_ID_UDP_BRIDGE
 // Throttled confirmation counter (logcat prints every 100 sends ~5s @20Hz)
 static long g_rc_send_seq = 0;
 
+// Last RC override we transmitted, used for closed-loop echo cross-check
+// against the autopilot's RC_CHANNELS report.
+static uint16_t g_last_rc[18] = {0};
+static bool g_has_last_rc = false;
+static pthread_mutex_t g_rc_mutex = PTHREAD_MUTEX_INITIALIZER;
+static long g_rc_echo_seq = 0;
+
 void *listen(int mavlink_port) {
     __android_log_print(ANDROID_LOG_DEBUG, TAG, "Starting mavlink thread...");
     // Create socket
@@ -255,6 +262,54 @@ void *listen(int mavlink_port) {
                         latestMavlinkData.telemetry_resolution = mavlink_msg_rc_channels_raw_get_chan8_raw(
                                 &msgMav);
                         latestMavlinkDataChange = true;
+
+                        // Closed-loop echo check: compare our override vs FC RC_CHANNELS
+                        if (msgMav.msgid == MAVLINK_MSG_ID_RC_CHANNELS) {
+                            uint16_t fc[18];
+                            fc[0] = mavlink_msg_rc_channels_get_chan1_raw(&msgMav);
+                            fc[1] = mavlink_msg_rc_channels_get_chan2_raw(&msgMav);
+                            fc[2] = mavlink_msg_rc_channels_get_chan3_raw(&msgMav);
+                            fc[3] = mavlink_msg_rc_channels_get_chan4_raw(&msgMav);
+                            fc[4] = mavlink_msg_rc_channels_get_chan5_raw(&msgMav);
+                            fc[5] = mavlink_msg_rc_channels_get_chan6_raw(&msgMav);
+                            fc[6] = mavlink_msg_rc_channels_get_chan7_raw(&msgMav);
+                            fc[7] = mavlink_msg_rc_channels_get_chan8_raw(&msgMav);
+                            fc[8] = mavlink_msg_rc_channels_get_chan9_raw(&msgMav);
+                            fc[9] = mavlink_msg_rc_channels_get_chan10_raw(&msgMav);
+                            fc[10] = mavlink_msg_rc_channels_get_chan11_raw(&msgMav);
+                            fc[11] = mavlink_msg_rc_channels_get_chan12_raw(&msgMav);
+                            fc[12] = mavlink_msg_rc_channels_get_chan13_raw(&msgMav);
+                            fc[13] = mavlink_msg_rc_channels_get_chan14_raw(&msgMav);
+                            fc[14] = mavlink_msg_rc_channels_get_chan15_raw(&msgMav);
+                            fc[15] = mavlink_msg_rc_channels_get_chan16_raw(&msgMav);
+                            fc[16] = mavlink_msg_rc_channels_get_chan17_raw(&msgMav);
+                            fc[17] = mavlink_msg_rc_channels_get_chan18_raw(&msgMav);
+                            pthread_mutex_lock(&g_rc_mutex);
+                            bool has = g_has_last_rc;
+                            uint16_t sent[18];
+                            if (has) memcpy(sent, g_last_rc, sizeof(sent));
+                            pthread_mutex_unlock(&g_rc_mutex);
+                            if (has) {
+                                int mism = 0, first = -1;
+                                for (int k = 0; k < 18; ++k) {
+                                    // only check channels we actively overrode (not 65535=ignore)
+                                    if (sent[k] != 65535 && sent[k] != fc[k]) {
+                                        mism++;
+                                        if (first < 0) first = k;
+                                    }
+                                }
+                                if ((++g_rc_echo_seq % 20) == 0) {
+                                    if (mism == 0) {
+                                        __android_log_print(ANDROID_LOG_INFO, TAG,
+                                            "RC echo OK: FC applied override (x%ld)", g_rc_echo_seq);
+                                    } else {
+                                        __android_log_print(ANDROID_LOG_INFO, TAG,
+                                            "RC echo MISMATCH x%ld: %d ch differ (first CH%d sent=%d fc=%d)",
+                                            g_rc_echo_seq, mism, first + 1, sent[first], fc[first]);
+                                    }
+                                }
+                            }
+                        }
                     }
                         break;
 
@@ -388,6 +443,12 @@ Java_com_openipc_mavlink_MavlinkNative_nativeSendRcChannels(JNIEnv *env, jclass 
         c[i] = (i < len) ? (uint16_t) ch[i] : 0;
     }
     env->ReleaseIntArrayElements(channels, ch, JNI_ABORT);
+
+    // Remember what we sent so the listen thread can cross-check the FC echo.
+    pthread_mutex_lock(&g_rc_mutex);
+    memcpy(g_last_rc, c, sizeof(g_last_rc));
+    g_has_last_rc = true;
+    pthread_mutex_unlock(&g_rc_mutex);
 
     mavlink_message_t msg;
     mavlink_msg_rc_channels_override_pack(RC_SRC_SYSID, RC_SRC_COMPID, &msg,
