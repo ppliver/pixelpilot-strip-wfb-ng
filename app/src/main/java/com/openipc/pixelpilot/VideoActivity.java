@@ -49,6 +49,7 @@ import com.openipc.videonative.VideoPlayer;
 import com.openipc.pixelpilot.rc.RcControllerManager;
 import com.openipc.pixelpilot.rc.GamepadManager;
 import com.openipc.pixelpilot.rc.VirtualJoystickView;
+import com.openipc.pixelpilot.video.SecondVideoWindow;
 
 import androidx.appcompat.app.AlertDialog;
 import android.widget.Button;
@@ -145,6 +146,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     private GamepadManager gamepad;
     private boolean gamepadConnected = false;
     private TextView[] chVal = new TextView[8];
+
+    // Second floating UDP video window (independent stream)
+    private SecondVideoWindow secondVideoWindow;
 
     public boolean getVRSetting() {
         return getSharedPreferences("general", Context.MODE_PRIVATE).getBoolean("vr-mode", false);
@@ -265,6 +269,10 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         // RC control (virtual joystick + gamepad -> RC_CHANNELS_OVERRIDE)
         setupRcController();
+
+        // Second floating UDP video window (independent stream)
+        secondVideoWindow = new SecondVideoWindow(this, binding.secondVideoHost);
+        secondVideoWindow.init();
 
         // Battery Receiver
         setupBatteryReceiver();
@@ -517,6 +525,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         // RC control submenu
         setupRcSubMenu(popup);
+
+        // Second UDP video window submenu
+        setupSecondVideoSubMenu(popup);
 
         popup.show();
     }
@@ -1383,6 +1394,101 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         });
     }
 
+    /**
+     * Submenu for the second floating UDP video window.
+     */
+    private void setupSecondVideoSubMenu(PopupMenu popup) {
+        SubMenu sub = popup.getMenu().addSubMenu(R.string.second_video_title);
+        SharedPreferences p = getSharedPreferences("second_video", MODE_PRIVATE);
+        boolean enabled = p.getBoolean("enabled", false);
+
+        MenuItem en = sub.add(R.string.second_video_enable);
+        en.setCheckable(true);
+        en.setChecked(enabled);
+        en.setOnMenuItemClickListener(item -> {
+            boolean e = !item.isChecked();
+            item.setChecked(e);
+            if (e) {
+                secondVideoWindow.enable(p.getString("ip", ""), p.getInt("port", 5601));
+            } else {
+                secondVideoWindow.disable();
+            }
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+
+        MenuItem cfg = sub.add(R.string.second_video_config);
+        cfg.setOnMenuItemClickListener(item -> {
+            showSecondVideoConfigDialog();
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+
+        MenuItem reset = sub.add(R.string.second_video_reset_pos);
+        reset.setOnMenuItemClickListener(item -> {
+            secondVideoWindow.resetPosition();
+            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
+            item.setActionView(new View(this));
+            return false;
+        });
+    }
+
+    /**
+     * Configuration dialog for the second video window: source IP, port, enable.
+     */
+    private void showSecondVideoConfigDialog() {
+        SharedPreferences p = getSharedPreferences("second_video", MODE_PRIVATE);
+        AlertDialog.Builder b = new AlertDialog.Builder(this);
+        b.setTitle(R.string.second_video_dialog_title);
+
+        ScrollView sv = new ScrollView(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(40, 20, 40, 20);
+
+        CheckBox cb = new CheckBox(this);
+        cb.setText(R.string.second_video_enable);
+        cb.setChecked(p.getBoolean("enabled", false));
+        root.addView(cb);
+
+        TextView ipLbl = new TextView(this);
+        ipLbl.setText(R.string.second_video_ip);
+        EditText ipEd = new EditText(this);
+        ipEd.setInputType(InputType.TYPE_CLASS_TEXT);
+        ipEd.setText(p.getString("ip", ""));
+        root.addView(ipLbl);
+        root.addView(ipEd);
+
+        TextView portLbl = new TextView(this);
+        portLbl.setText(R.string.second_video_port);
+        EditText portEd = new EditText(this);
+        portEd.setInputType(InputType.TYPE_CLASS_NUMBER);
+        portEd.setText(String.valueOf(p.getInt("port", 5601)));
+        root.addView(portLbl);
+        root.addView(portEd);
+
+        sv.addView(root);
+        b.setView(sv);
+        b.setPositiveButton(R.string.rc_apply, (d, w) -> {
+            String ip = ipEd.getText().toString().trim();
+            int port = 5601;
+            try {
+                port = Integer.parseInt(portEd.getText().toString().trim());
+            } catch (NumberFormatException ignore) {
+            }
+            boolean en = cb.isChecked();
+            if (en) {
+                secondVideoWindow.enable(ip, port);
+            } else {
+                secondVideoWindow.disable();
+            }
+        });
+        b.setNegativeButton(R.string.rc_done, (d, w) -> d.dismiss());
+        b.show();
+    }
+
     @Override
     public boolean onGenericMotionEvent(MotionEvent event) {
         if (gamepad != null && gamepad.onGenericMotionEvent(event)) {
@@ -1685,6 +1791,8 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         unregisterReceivers();
 
+        if (secondVideoWindow != null) secondVideoWindow.pause();
+
         videoPlayer.stop();
         videoPlayer.stopAudio();
     }
@@ -1715,7 +1823,15 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         if (rcManager != null && rcManager.isEnabled()) rcManager.start();
 
+        if (secondVideoWindow != null) secondVideoWindow.resume();
+
         super.onResume();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (secondVideoWindow != null) secondVideoWindow.release();
+        super.onDestroy();
     }
 
 

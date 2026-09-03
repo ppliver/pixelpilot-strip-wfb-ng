@@ -74,6 +74,7 @@
         style="@style/Widget.Material3.Button.IconButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:translationZ="30dp"
         app:icon="@drawable/baseline_settings_24"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
@@ -675,6 +676,19 @@
         layout="@layout/rc_control_overlay"
         android:layout_width="0dp"
         android:layout_height="0dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Host for the floating second UDP video window. Stays on top of OSD/RC. -->
+    <FrameLayout
+        android:id="@+id/secondVideoHost"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:translationZ="25dp"
+        android:clipChildren="false"
+        android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"

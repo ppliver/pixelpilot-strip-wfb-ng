@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Floating, draggable and resizable container for the second UDP video stream.
+  The root FrameLayout is positioned (left/top margins) and sized (width/height)
+  by SecondVideoWindow at runtime; it is hosted inside secondVideoHost.
+
+  The drag handle is the top title bar. The close button is a sibling overlay
+  (top-right) so its taps are not swallowed by the drag handler.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/secondVideoContainer"
+    android:layout_width="320dp"
+    android:layout_height="240dp"
+    android:background="@android:color/black"
+    android:elevation="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/dragHandle"
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:background="#AA000000"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="36dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/second_video_title"
+                android:textColor="@android:color/white"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/tvSecondStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:textColor="@android:color/holo_green_light"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <TextureView
+            android:id="@+id/secondVideoTexture"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="#FF111111" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/btnClose"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_gravity="top|end"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:src="@android:drawable/ic_menu_close_clear_cancel"
+        android:tint="@android:color/white" />
+
+    <View
+        android:id="@+id/resizeHandle"
+        android:layout_width="26dp"
+        android:layout_height="26dp"
+        android:layout_gravity="bottom|end"
+        android:background="@android:color/holo_blue_dark" />
+</FrameLayout>

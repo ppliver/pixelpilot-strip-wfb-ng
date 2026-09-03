@@ -54,6 +54,17 @@ class VideoPlayer
 
     void setForwarding(const std::string& ip, int port, bool enabled);
 
+    /**
+     * Start an independent UDP receiver on @param port feeding this player's own
+     * parser/decoder (used for a second, separate video stream). No UDS receiver
+     * and no forwarding are created. @param filterIp, when non-empty, restricts
+     * accepted packets to that sender IP.
+     */
+    void startExternalReceiver(int port, const std::string& filterIp);
+
+    /** Stop and release the external UDP receiver, if any. */
+    void stopExternalReceiver();
+
   private:
     void onNewNALU(const NALU& nalu);
 
@@ -123,6 +134,8 @@ class VideoPlayer
     VideoDecoder                 videoDecoder;
     std::unique_ptr<UDPReceiver> mUDPReceiver;
     std::unique_ptr<UDSReceiver> mUDSReceiver;
+    // Second, independent UDP video stream (e.g. a second camera).
+    std::unique_ptr<UDPReceiver> mUDPReceiver2;
     long                         nNALUsAtLastCall = 0;
 
   public:

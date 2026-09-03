@@ -262,6 +262,32 @@ void VideoPlayer::setForwarding(const std::string& ip, int port, bool enabled)
     }
 }
 
+void VideoPlayer::startExternalReceiver(int port, const std::string& filterIp)
+{
+    if (mUDPReceiver2)
+    {
+        stopExternalReceiver();
+    }
+    mUDPReceiver2 = std::make_unique<UDPReceiver>(
+        javaVm,
+        port,
+        "UdpReceiver2",
+        -16,
+        [this](const uint8_t* data, size_t data_length) { onNewRTPData(data, data_length); },
+        WANTED_UDP_RCVBUF_SIZE);
+    mUDPReceiver2->setSourceFilter(filterIp);
+    mUDPReceiver2->startReceiving();
+}
+
+void VideoPlayer::stopExternalReceiver()
+{
+    if (mUDPReceiver2)
+    {
+        mUDPReceiver2->stopReceiving();
+        mUDPReceiver2.reset();
+    }
+}
+
 //----------------------------------------------------JAVA
 // bindings---------------------------------------------------------------
 #define JNI_METHOD(return_type, method_name) \
@@ -290,6 +316,7 @@ extern "C"
     (JNIEnv* env, jclass jclass1, jlong videoPlayerN)
     {
         VideoPlayer* p = native(videoPlayerN);
+        p->stopExternalReceiver();
         delete (p);
     }
 
@@ -322,6 +349,32 @@ extern "C"
     (JNIEnv* env, jclass jclass1, jlong videoPlayerN, jobject surface, jint index)
     {
         native(videoPlayerN)->setVideoSurface(env, surface, index);
+    }
+
+    JNI_METHOD(void, nativeStartExternalReceiver)
+    (JNIEnv* env, jclass jclass1, jlong nativeInstance, jint port, jstring filterIp)
+    {
+        VideoPlayer* p = native(nativeInstance);
+        if (p)
+        {
+            const char* ip = (filterIp != nullptr) ? env->GetStringUTFChars(filterIp, nullptr) : nullptr;
+            std::string  ip_cpp(ip ? ip : "");
+            if (ip)
+            {
+                env->ReleaseStringUTFChars(filterIp, ip);
+            }
+            p->startExternalReceiver((int) port, ip_cpp);
+        }
+    }
+
+    JNI_METHOD(void, nativeStopExternalReceiver)
+    (JNIEnv* env, jclass jclass1, jlong nativeInstance)
+    {
+        VideoPlayer* p = native(nativeInstance);
+        if (p)
+        {
+            p->stopExternalReceiver();
+        }
     }
 
     JNI_METHOD(jstring, getVideoInfoString)

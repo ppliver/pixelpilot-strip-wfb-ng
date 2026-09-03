@@ -226,6 +226,14 @@ void UDPReceiver::receiveFromUDPLoop()
         // ssize_t message_length = recv(mSocket, buff, (size_t) mBuffsize, MSG_WAITALL);
         if (message_length > 0)
         {  // else -1 was returned;timeout/No data received
+            // Source IP filter (v4-mapped addresses print as dotted quad so a
+            // plain IPv4 filter string matches them). Empty filter accepts all.
+            const std::string s1 = addrToString(&source);
+            if (!mSourceFilter.empty() && s1 != mSourceFilter)
+            {
+                continue;
+            }
+
             // 1. Forward packet first (minimize latency)
             {
                 std::lock_guard<std::mutex> lock(mForwardMutex);
@@ -241,7 +249,6 @@ void UDPReceiver::receiveFromUDPLoop()
 
             nReceivedBytes += message_length;
             // The source ip stuff (IPv6 aware; v4-mapped prints as dotted quad)
-            std::string s1 = addrToString(&source);
             if (senderIP != s1)
             {
                 senderIP = s1;
@@ -280,4 +287,9 @@ void UDPReceiver::setForwarding(const std::string& ip, int port, bool enabled)
         MLOGE << "Cannot parse forwarding target " << ip << ":" << port;
         mForwardEnabled = false;
     }
+}
+
+void UDPReceiver::setSourceFilter(const std::string& ip)
+{
+    mSourceFilter = ip;
 }

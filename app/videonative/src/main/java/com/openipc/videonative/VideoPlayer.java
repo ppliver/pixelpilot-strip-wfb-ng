@@ -52,6 +52,16 @@ public class VideoPlayer implements IVideoParamsChanged {
 
     public static native void nativeSetUdpForwarding(long nativeInstance, String ip, int port, boolean enabled);
 
+    /**
+     * Start an independent UDP receiver on @param port that feeds this player's
+     * own parser/decoder (a second, separate video stream). @param filterIp, when
+     * non-empty, restricts accepted packets to that sender IP.
+     */
+    public static native void nativeStartExternalReceiver(long nativeInstance, int port, String filterIp);
+
+    /** Stop and release the external UDP receiver started via {@link #startExternalReceiver}. */
+    public static native void nativeStopExternalReceiver(long nativeInstance);
+
     public static native void nativeStartDvr(long nativeInstance, int fd, int fmp4_enabled);
 
     public static native void nativeStopDvr(long nativeInstance);
@@ -137,6 +147,16 @@ public class VideoPlayer implements IVideoParamsChanged {
 
     public void stopDvr() {
         nativeStopDvr(nativeVideoPlayer);
+    }
+
+    public void startExternalReceiver(int port, String filterIp) {
+        verifyApplicationThread();
+        nativeStartExternalReceiver(nativeVideoPlayer, port, filterIp);
+    }
+
+    public void stopExternalReceiver() {
+        verifyApplicationThread();
+        nativeStopExternalReceiver(nativeVideoPlayer);
     }
 
     /**

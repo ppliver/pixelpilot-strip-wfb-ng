@@ -92,6 +92,7 @@ class UDPReceiver
     std::string                   mForwardIP      = "";
     int                           mForwardPort    = 0;
     bool                          mForwardEnabled = false;
+    std::string                   mSourceFilter   = "";
     // Stored generically so forwarding works for both IPv4 and IPv6 targets.
     struct sockaddr_storage       mDestAddr{};
     socklen_t                     mDestAddrLen = 0;
