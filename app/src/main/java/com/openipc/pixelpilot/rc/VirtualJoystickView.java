@@ -44,6 +44,10 @@ public class VirtualJoystickView extends View {
     // Active pointer -> pad mapping.
     private final android.util.SparseIntArray pointerPad = new android.util.SparseIntArray();
 
+    // Per-axis auto-centre flags (driven by the channel config: throttle holds).
+    private final boolean[] autoCenterX = {true, true};
+    private final boolean[] autoCenterY = {true, true};
+
     private final Paint basePaint = new Paint();
     private final Paint stickPaint = new Paint();
     private final Paint ringPaint = new Paint();
@@ -80,6 +84,18 @@ public class VirtualJoystickView extends View {
 
     public void setThrottleSide(int side) {
         this.throttleSide = (side == RIGHT) ? RIGHT : LEFT;
+        // Throttle lives on the vertical axis of this pad and must hold its value.
+        autoCenterY[this.throttleSide] = false;
+    }
+
+    /**
+     * Controls whether each axis springs back to neutral when the finger is lifted.
+     * Driven by the per-channel "auto centre" setting (throttle = false).
+     */
+    public void setAxisAutoCenter(int pad, boolean xAuto, boolean yAuto) {
+        if (pad != LEFT && pad != RIGHT) return;
+        autoCenterX[pad] = xAuto;
+        autoCenterY[pad] = yAuto;
     }
 
     public void setLocked(boolean locked) {
@@ -139,11 +155,18 @@ public class VirtualJoystickView extends View {
             case MotionEvent.ACTION_CANCEL: {
                 int pad = pointerPad.get(pointerId, -1);
                 pointerPad.delete(pointerId);
-                if (pad != -1 && pad != throttleSide) {
-                    // spring-centered stick returns to neutral
-                    padNx[pad] = 0f;
-                    padNy[pad] = 0f;
-                    report(pad);
+                if (pad != -1) {
+                    // Each axis springs back only if its channel is configured to.
+                    boolean changed = false;
+                    if (autoCenterX[pad] && padNx[pad] != 0f) {
+                        padNx[pad] = 0f;
+                        changed = true;
+                    }
+                    if (autoCenterY[pad] && padNy[pad] != 0f) {
+                        padNy[pad] = 0f;
+                        changed = true;
+                    }
+                    if (changed) report(pad);
                 }
                 break;
             }

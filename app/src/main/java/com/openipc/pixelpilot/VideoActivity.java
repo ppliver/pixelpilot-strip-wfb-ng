@@ -51,10 +51,16 @@ import com.openipc.pixelpilot.rc.GamepadManager;
 import com.openipc.pixelpilot.rc.VirtualJoystickView;
 
 import androidx.appcompat.app.AlertDialog;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
+import android.widget.ScrollView;
 import android.widget.TextView;
+import android.graphics.Typeface;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -502,6 +508,10 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         // Object Detection submenu
         setupObjectDetectionSubMenu(popup);
 
+        // OSD submenu (toggles + lock). Restored: it is driven purely by
+        // MAVLink telemetry, not by wfb-ng, so it survived the strip.
+        setupOSDSubMenu(popup);
+
         // RC control submenu
         setupRcSubMenu(popup);
 
@@ -719,8 +729,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         joystick.setStickListener(rcManager);
         joystick.setThrottleSide(rcManager.getThrottleSide());
         joystick.setOpacity(0.5f);
+        applyStickAutoCenter();
 
-        gamepad = new GamepadManager();
+        gamepad = new GamepadManager(this);
         gamepad.setListener(rcManager);
 
         chVal[0] = binding.rcOverlay.chVal1;
@@ -765,13 +776,31 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         }
     }
 
+    /**
+     * Push the per-channel "auto centre" setting down to the virtual sticks
+     * (index order: 0=LX, 1=LY, 2=RX, 3=RY).
+     */
+    private void applyStickAutoCenter() {
+        if (rcManager == null) return;
+        boolean[] ac = rcManager.getStickAutoCenter();
+        VirtualJoystickView joystick = binding.rcOverlay.joystickView;
+        joystick.setAxisAutoCenter(VirtualJoystickView.LEFT, ac[0], ac[1]);
+        joystick.setAxisAutoCenter(VirtualJoystickView.RIGHT, ac[2], ac[3]);
+    }
+
     private void setRcOverlayVisible(boolean visible) {
         binding.rcOverlay.getRoot().setVisibility(visible ? View.VISIBLE : View.GONE);
     }
 
     private void updateRcHud(int[] pwm, boolean ok) {
         if (chVal[0] == null) return;
+        // The HUD has eight slots; anything beyond the configured count is blanked.
+        int shown = Math.min(8, rcManager.getChannelCount());
         for (int i = 0; i < 8; i++) {
+            if (i >= shown) {
+                chVal[i].setText("—");
+                continue;
+            }
             int v = pwm[i];
             chVal[i].setText(v == 65535 ? "—" : String.valueOf(v));
         }
@@ -787,36 +816,126 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         binding.rcOverlay.rcStatus.setText(status);
     }
 
+    /** Editable widgets for one channel row in the RC settings dialog. */
+    private static class RcRow {
+        int ch;
+        CheckBox enabled;
+        CheckBox invert;
+        CheckBox autoCenter;
+        EditText min;
+        EditText max;
+        EditText center;
+        EditText trim;
+    }
+
     private void showRcChannelConfigDialog() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         View dialogView = getLayoutInflater().inflate(R.layout.dialog_rc_config, null);
         LinearLayout list = dialogView.findViewById(R.id.rcChannelList);
 
-        class Row {
-            int ch;
-            CheckBox enabled;
-            CheckBox invert;
-            EditText min;
-            EditText max;
-            EditText center;
-            EditText trim;
-        }
-        java.util.List<Row> rows = new java.util.ArrayList<>();
+        // ---------- global settings ----------
+        list.addView(sectionTitle(getString(R.string.rc_global_section)));
 
-        for (int i = 1; i <= 8; i++) {
+        list.addView(fieldLabel(getString(R.string.rc_rate_hz)));
+        final int[] rateOpts = {5, 10, 20, 30, 50};
+        RadioGroup rateGroup = new RadioGroup(this);
+        rateGroup.setOrientation(RadioGroup.HORIZONTAL);
+        for (int hz : rateOpts) {
+            RadioButton rb = new RadioButton(this);
+            rb.setId(2000 + hz);
+            rb.setText(hz + "Hz");
+            rateGroup.addView(rb);
+        }
+        rateGroup.check(2000 + rcManager.getRateHz());
+        if (rateGroup.getCheckedRadioButtonId() < 0) {
+            rateGroup.check(2020); // stored rate not in the list -> fall back to 20Hz
+        }
+        list.addView(rateGroup);
+
+        list.addView(fieldLabel(getString(R.string.rc_channel_count)));
+        final int[] countOpts = {8, 12, 16, 18};
+        RadioGroup countGroup = new RadioGroup(this);
+        countGroup.setOrientation(RadioGroup.HORIZONTAL);
+        for (int c : countOpts) {
+            RadioButton rb = new RadioButton(this);
+            rb.setId(1000 + c);
+            rb.setText(String.valueOf(c));
+            countGroup.addView(rb);
+        }
+        countGroup.check(1000 + rcManager.getChannelCount());
+        if (countGroup.getCheckedRadioButtonId() < 0) {
+            countGroup.check(1008); // stored count not in the list -> fall back to 8
+        }
+        list.addView(countGroup);
+
+        Button calibBtn = new Button(this);
+        calibBtn.setText(R.string.rc_gamepad_calib);
+        list.addView(calibBtn);
+
+        // ---------- per-channel rows ----------
+        list.addView(sectionTitle(getString(R.string.rc_channel_config)));
+        final java.util.List<RcRow> rows = new java.util.ArrayList<>();
+        final LinearLayout channelHost = new LinearLayout(this);
+        channelHost.setOrientation(LinearLayout.VERTICAL);
+        list.addView(channelHost);
+
+        buildChannelRows(channelHost, rows, rcManager.getChannelCount());
+
+        countGroup.setOnCheckedChangeListener((group, checkedId) ->
+                buildChannelRows(channelHost, rows, checkedId - 1000));
+        calibBtn.setOnClickListener(v -> showGamepadCalibDialog());
+
+        builder.setView(dialogView);
+        builder.setTitle(R.string.rc_settings);
+        builder.setPositiveButton(R.string.rc_done, (dialog, which) -> {
+            int rateId = rateGroup.getCheckedRadioButtonId();
+            if (rateId >= 2000) {
+                rcManager.setRateHz(rateId - 2000);
+            }
+            int countId = countGroup.getCheckedRadioButtonId();
+            if (countId >= 1000) {
+                rcManager.setChannelCount(countId - 1000);
+            }
+            for (RcRow r : rows) {
+                RcControllerManager.ChannelCfg cfg = new RcControllerManager.ChannelCfg();
+                cfg.enabled = r.enabled.isChecked();
+                cfg.inverted = r.invert.isChecked();
+                cfg.autoCenter = r.autoCenter.isChecked();
+                cfg.min = parseOr(r.min, 1000);
+                cfg.max = parseOr(r.max, 2000);
+                cfg.center = parseOr(r.center, 1500);
+                cfg.trim = parseOr(r.trim, 0);
+                rcManager.setChannel(r.ch, cfg);
+            }
+            applyStickAutoCenter();
+        });
+        builder.setNegativeButton(android.R.string.cancel, null);
+        builder.show();
+    }
+
+    /** (Re)builds one labelled card per driven channel. */
+    private void buildChannelRows(LinearLayout host, java.util.List<RcRow> rows, int count) {
+        host.removeAllViews();
+        rows.clear();
+        for (int i = 1; i <= count; i++) {
             final int ch = i;
             RcControllerManager.ChannelCfg cfg = rcManager.getChannel(ch);
 
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setPadding(0, 8, 0, 8);
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(0, 10, 0, 10);
 
-            TextView name = new TextView(this);
-            name.setText("CH" + ch);
-            name.setWidth(70);
-            name.setTextColor(getResources().getColor(android.R.color.black));
+            TextView title = new TextView(this);
+            title.setText("CH" + ch + "  " + channelRole(ch));
+            title.setTextSize(15f);
+            title.setTypeface(null, Typeface.BOLD);
+            title.setTextColor(getResources().getColor(android.R.color.black));
+            card.addView(title);
 
-            Row r = new Row();
+            LinearLayout toggles = new LinearLayout(this);
+            toggles.setOrientation(LinearLayout.HORIZONTAL);
+
+            RcRow r = new RcRow();
             r.ch = ch;
             r.enabled = new CheckBox(this);
             r.enabled.setText(R.string.rc_enabled);
@@ -824,54 +943,264 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
             r.invert = new CheckBox(this);
             r.invert.setText(R.string.rc_invert);
             r.invert.setChecked(cfg.inverted);
-            r.min = new EditText(this);
-            r.min.setHint(R.string.rc_min);
-            r.min.setText(String.valueOf(cfg.min));
-            r.min.setInputType(InputType.TYPE_CLASS_NUMBER);
-            r.min.setWidth(80);
-            r.max = new EditText(this);
-            r.max.setHint(R.string.rc_max);
-            r.max.setText(String.valueOf(cfg.max));
-            r.max.setInputType(InputType.TYPE_CLASS_NUMBER);
-            r.max.setWidth(80);
-            r.center = new EditText(this);
-            r.center.setHint(R.string.rc_center);
-            r.center.setText(String.valueOf(cfg.center));
-            r.center.setInputType(InputType.TYPE_CLASS_NUMBER);
-            r.center.setWidth(80);
-            r.trim = new EditText(this);
-            r.trim.setHint(R.string.rc_trim);
-            r.trim.setText(String.valueOf(cfg.trim));
-            r.trim.setInputType(InputType.TYPE_CLASS_NUMBER);
-            r.trim.setWidth(70);
+            r.autoCenter = new CheckBox(this);
+            r.autoCenter.setText(R.string.rc_auto_center);
+            r.autoCenter.setChecked(cfg.autoCenter);
+            toggles.addView(r.enabled);
+            toggles.addView(r.invert);
+            toggles.addView(r.autoCenter);
+            card.addView(toggles);
 
-            row.addView(name);
-            row.addView(r.enabled);
-            row.addView(r.invert);
-            row.addView(r.min);
-            row.addView(r.max);
-            row.addView(r.center);
-            row.addView(r.trim);
-            list.addView(row);
+            r.min = new EditText(this);
+            r.max = new EditText(this);
+            r.center = new EditText(this);
+            r.trim = new EditText(this);
+            for (EditText e : new EditText[]{r.min, r.max, r.center, r.trim}) {
+                e.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
+                e.setSingleLine(true);
+            }
+
+            LinearLayout nums1 = new LinearLayout(this);
+            nums1.setOrientation(LinearLayout.HORIZONTAL);
+            nums1.addView(labeledField(getString(R.string.rc_min), r.min, String.valueOf(cfg.min)));
+            nums1.addView(labeledField(getString(R.string.rc_max), r.max, String.valueOf(cfg.max)));
+
+            LinearLayout nums2 = new LinearLayout(this);
+            nums2.setOrientation(LinearLayout.HORIZONTAL);
+            nums2.addView(labeledField(getString(R.string.rc_center), r.center, String.valueOf(cfg.center)));
+            nums2.addView(labeledField(getString(R.string.rc_trim), r.trim, String.valueOf(cfg.trim)));
+
+            card.addView(nums1);
+            card.addView(nums2);
+
+            View sep = new View(this);
+            sep.setBackgroundColor(0xFFCCCCCC);
+            sep.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 1));
+            card.addView(sep);
+
+            host.addView(card);
             rows.add(r);
         }
+    }
 
-        builder.setView(dialogView);
-        builder.setTitle(R.string.rc_channel_config);
-        builder.setPositiveButton(R.string.rc_done, (dialog, which) -> {
-            for (Row r : rows) {
-                RcControllerManager.ChannelCfg cfg = new RcControllerManager.ChannelCfg();
-                cfg.enabled = r.enabled.isChecked();
-                cfg.inverted = r.invert.isChecked();
-                cfg.min = parseOr(r.min, 1000);
-                cfg.max = parseOr(r.max, 2000);
-                cfg.center = parseOr(r.center, 1500);
-                cfg.trim = parseOr(r.trim, 0);
-                rcManager.setChannel(r.ch, cfg);
+    private LinearLayout labeledField(String label, EditText field, String value) {
+        LinearLayout ll = new LinearLayout(this);
+        ll.setOrientation(LinearLayout.HORIZONTAL);
+        ll.setPadding(0, 0, 20, 0);
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextColor(getResources().getColor(android.R.color.black));
+        tv.setMinWidth(90);
+        field.setText(value);
+        field.setMinWidth(160);
+        ll.addView(tv);
+        ll.addView(field);
+        return ll;
+    }
+
+    private TextView sectionTitle(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(15f);
+        tv.setTypeface(null, Typeface.BOLD);
+        tv.setTextColor(getResources().getColor(android.R.color.black));
+        tv.setPadding(0, 14, 0, 4);
+        return tv;
+    }
+
+    private TextView fieldLabel(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextColor(getResources().getColor(android.R.color.black));
+        tv.setPadding(0, 8, 0, 2);
+        return tv;
+    }
+
+    /** Human readable role of a channel, derived from the active stick mapping. */
+    private String channelRole(int ch) {
+        int[] map = rcManager.getStickChannels(); // index 0=LX,1=LY,2=RX,3=RY
+        for (int i = 0; i < map.length; i++) {
+            if (map[i] == ch) {
+                switch (i) {
+                    case 0:
+                        return getString(R.string.rc_slot_yaw);
+                    case 2:
+                        return getString(R.string.rc_slot_roll);
+                    case 1:
+                        return getString(rcManager.getMode() == 2
+                                ? R.string.rc_slot_throttle : R.string.rc_slot_pitch);
+                    case 3:
+                        return getString(rcManager.getMode() == 2
+                                ? R.string.rc_slot_pitch : R.string.rc_slot_throttle);
+                    default:
+                        break;
+                }
+            }
+        }
+        if (ch >= 5) {
+            return String.format(java.util.Locale.US, getString(R.string.rc_aux_fmt), ch);
+        }
+        return "";
+    }
+
+    /**
+     * Gamepad calibration: shows every input slot with its live value and lets the
+     * user re-bind it by tapping "bind" and then moving the desired axis.
+     */
+    private void showGamepadCalibDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(28, 18, 28, 18);
+
+        TextView help = new TextView(this);
+        help.setText(R.string.rc_gamepad_calib_help);
+        help.setTextColor(getResources().getColor(android.R.color.black));
+        root.addView(help);
+
+        ScrollView sv = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        sv.addView(list);
+        root.addView(sv);
+
+        final int[] slots = {
+                GamepadManager.SLOT_LX, GamepadManager.SLOT_LY,
+                GamepadManager.SLOT_RX, GamepadManager.SLOT_RY,
+                GamepadManager.SLOT_AUX1, GamepadManager.SLOT_AUX2,
+                GamepadManager.SLOT_AUX3, GamepadManager.SLOT_AUX4,
+        };
+        final TextView[] bindLabels = new TextView[slots.length];
+        final ProgressBar[] bars = new ProgressBar[slots.length];
+        final TextView[] valLabels = new TextView[slots.length];
+
+        for (int i = 0; i < slots.length; i++) {
+            final int slot = slots[i];
+
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(0, 10, 0, 10);
+
+            TextView title = new TextView(this);
+            title.setText(slotTitle(slot));
+            title.setTextSize(15f);
+            title.setTypeface(null, Typeface.BOLD);
+            title.setTextColor(getResources().getColor(android.R.color.black));
+            card.addView(title);
+
+            LinearLayout line = new LinearLayout(this);
+            line.setOrientation(LinearLayout.HORIZONTAL);
+            Button bindBtn = new Button(this);
+            bindBtn.setText(R.string.rc_bind);
+            TextView bindLabel = new TextView(this);
+            bindLabel.setText(GamepadManager.axisName(gamepad.getBinding(slot)));
+            bindLabel.setTextColor(getResources().getColor(android.R.color.black));
+            bindLabel.setPadding(16, 0, 0, 0);
+            bindLabels[i] = bindLabel;
+            line.addView(bindBtn);
+            line.addView(bindLabel);
+            card.addView(line);
+
+            ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            bar.setMax(200);
+            bar.setProgress(100);
+            bars[i] = bar;
+            card.addView(bar);
+
+            TextView val = new TextView(this);
+            val.setText("0.00");
+            val.setTextColor(getResources().getColor(android.R.color.black));
+            valLabels[i] = val;
+            card.addView(val);
+
+            bindBtn.setOnClickListener(v -> {
+                gamepad.startLearning(slot);
+                bindLabel.setText(R.string.rc_binding);
+            });
+
+            list.addView(card);
+        }
+
+        Button resetBtn = new Button(this);
+        resetBtn.setText(R.string.rc_reset_bindings);
+        resetBtn.setOnClickListener(v -> {
+            gamepad.resetToDefaultsAndSave();
+            for (int i = 0; i < slots.length; i++) {
+                bindLabels[i].setText(GamepadManager.axisName(gamepad.getBinding(slots[i])));
             }
         });
-        builder.setNegativeButton(android.R.string.cancel, null);
-        builder.show();
+        root.addView(resetBtn);
+
+        gamepad.setCalibListener(new GamepadManager.CalibListener() {
+            @Override
+            public void onLiveValues(float[] values) {
+                for (int i = 0; i < slots.length; i++) {
+                    int idx = indexOfAxis(GamepadManager.CANDIDATE_AXES, gamepad.getBinding(slots[i]));
+                    if (idx < 0) continue;
+                    float v = values[idx];
+                    bars[i].setProgress((int) ((v + 1f) * 100f));
+                    valLabels[i].setText(String.format(java.util.Locale.US, "%.2f", v));
+                }
+            }
+
+            @Override
+            public void onBindingLearned(int slot, int axis) {
+                for (int i = 0; i < slots.length; i++) {
+                    if (slots[i] == slot) {
+                        bindLabels[i].setText(GamepadManager.axisName(axis));
+                    }
+                }
+            }
+        });
+
+        builder.setView(root);
+        builder.setTitle(R.string.rc_gamepad_calib);
+        builder.setNegativeButton(R.string.rc_done, null);
+        builder.setOnDismissListener(d -> {
+            gamepad.cancelLearning();
+            gamepad.setCalibListener(null);
+        });
+        AlertDialog dlg = builder.show();
+
+        // Gamepad motion is delivered to the focused window; mirror it from the
+        // dialog's decor view so learning also works while this dialog is open.
+        if (dlg.getWindow() != null) {
+            View decor = dlg.getWindow().getDecorView();
+            decor.setOnGenericMotionListener((v, ev) -> gamepad.onGenericMotionEvent(ev));
+        }
+        root.setOnGenericMotionListener((v, ev) -> gamepad.onGenericMotionEvent(ev));
+    }
+
+    private String slotTitle(int slot) {
+        switch (slot) {
+            case GamepadManager.SLOT_LX:
+            case GamepadManager.SLOT_LY:
+            case GamepadManager.SLOT_RX:
+            case GamepadManager.SLOT_RY: {
+                int[] map = rcManager.getStickChannels();
+                int idx = slot - GamepadManager.SLOT_LX;
+                int ch = map[idx];
+                return "CH" + ch + "  " + channelRole(ch);
+            }
+            case GamepadManager.SLOT_AUX1:
+            case GamepadManager.SLOT_AUX2:
+            case GamepadManager.SLOT_AUX3:
+            case GamepadManager.SLOT_AUX4: {
+                int ch = 5 + (slot - GamepadManager.SLOT_AUX1);
+                return "CH" + ch + "  " + String.format(java.util.Locale.US,
+                        getString(R.string.rc_aux_fmt), ch);
+            }
+            default:
+                return "";
+        }
+    }
+
+    private static int indexOfAxis(int[] axes, int axis) {
+        for (int i = 0; i < axes.length; i++) {
+            if (axes[i] == axis) return i;
+        }
+        return -1;
     }
 
     private int parseOr(EditText e, int fallback) {
@@ -941,19 +1270,8 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
             int m = (rcManager.getMode() == 1) ? 2 : 1;
             rcManager.setMode(m);
             binding.rcOverlay.joystickView.setThrottleSide(rcManager.getThrottleSide());
+            applyStickAutoCenter();
             mode.setTitle(getString(R.string.rc_mode) + ": " + m);
-            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
-            item.setActionView(new View(this));
-            return false;
-        });
-
-        MenuItem rate = rc.add(getString(R.string.rc_rate) + ": " + rcManager.getRateHz() + "Hz");
-        rate.setOnMenuItemClickListener(item -> {
-            int[] opts = {10, 20, 50};
-            int cur = java.util.Arrays.asList(10, 20, 50).indexOf(rcManager.getRateHz());
-            int next = opts[(cur < 0 ? 0 : cur + 1) % 3];
-            rcManager.setRateHz(next);
-            rate.setTitle(getString(R.string.rc_rate) + ": " + next + "Hz");
             item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
             item.setActionView(new View(this));
             return false;
@@ -973,7 +1291,8 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
             return false;
         });
 
-        MenuItem cfg = rc.add(R.string.rc_channel_config);
+        // Rate and channel count now live in the RC settings dialog.
+        MenuItem cfg = rc.add(R.string.rc_settings);
         cfg.setOnMenuItemClickListener(item -> {
             showRcChannelConfigDialog();
             item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);

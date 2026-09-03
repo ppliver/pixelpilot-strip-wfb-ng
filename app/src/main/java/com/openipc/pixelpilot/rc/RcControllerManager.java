@@ -44,6 +44,9 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
         public int trim = 0;
         public boolean inverted = false;
         public boolean enabled = true;
+        /** When true the driving input springs back to centre on release;
+         *  when false it holds its last value (e.g. throttle). */
+        public boolean autoCenter = true;
     }
 
     private final Context context;
@@ -57,6 +60,8 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
     private boolean enabled = false;
     private boolean showSticks = false;
     private int rateHz = 20;
+    /** How many channels (starting at CH1) are actively driven/overridden. */
+    private int channelCount = 8;
     private boolean manualTarget = false;
     private String manualIp = "192.168.1.10";
     private int manualPort = 14550;
@@ -86,8 +91,10 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
         this.context = context;
         this.prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         for (int i = 0; i < MAX_CHANNELS; i++) channels[i] = new ChannelCfg();
-        // Throttle (CH3) defaults to inverted so "stick up = more throttle" on a touch TX.
+        // Throttle (CH3) defaults to inverted so "stick up = more throttle" on a touch TX,
+        // and it must NOT spring back to centre (it holds last value).
         channels[2].inverted = true;
+        channels[2].autoCenter = false;
         loadConfig();
     }
 
@@ -159,6 +166,36 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
         prefs.edit().putInt("rate_hz", this.rateHz).apply();
     }
 
+    public int getChannelCount() {
+        return channelCount;
+    }
+
+    public void setChannelCount(int count) {
+        this.channelCount = Math.max(4, Math.min(MAX_CHANNELS, count));
+        prefs.edit().putInt("channel_count", this.channelCount).apply();
+    }
+
+    /**
+     * Channel number driven by each stick axis.
+     * Index: 0=LX, 1=LY, 2=RX, 3=RY — value is a 1-based channel number.
+     */
+    public int[] getStickChannels() {
+        return stickToChannel.clone();
+    }
+
+    /**
+     * Per stick-axis auto-centre flags, derived from the channel each axis drives.
+     * Index: 0=LX, 1=LY, 2=RX, 3=RY (same order as MODE1/MODE2 tables).
+     */
+    public boolean[] getStickAutoCenter() {
+        boolean[] out = new boolean[4];
+        for (int i = 0; i < 4; i++) {
+            int c = stickToChannel[i];
+            out[i] = (c >= 1 && c <= MAX_CHANNELS) && channels[c - 1].autoCenter;
+        }
+        return out;
+    }
+
     public boolean isManualTarget() {
         return manualTarget;
     }
@@ -226,7 +263,8 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
     private int[] computePwm() {
         int[] pwm = new int[MAX_CHANNELS];
         for (int i = 0; i < MAX_CHANNELS; i++) {
-            pwm[i] = (i < 8) ? 65535 : 0; // 1-8: 65535=ignore, 9-18: 0=ignore
+            // within the configured range: 65535 = ignore; beyond it: 0 = ignore
+            pwm[i] = (i < channelCount) ? 65535 : 0;
         }
 
         boolean gp = isGamepadActive();
@@ -234,16 +272,17 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
 
         for (int i = 0; i < 4; i++) {
             int c = stickToChannel[i];
-            if (c >= 1 && c <= MAX_CHANNELS) {
+            if (c >= 1 && c <= channelCount) {
                 pwm[c - 1] = mapAxis(a[i], c);
             }
         }
 
         if (gp) {
-            pwm[4] = auxPwm(5, gpadAux[0] * 2f - 1f); // brake 0..1 -> -1..1
-            pwm[5] = auxPwm(6, gpadAux[1] * 2f - 1f); // gas
-            pwm[6] = auxPwm(7, gpadAux[2]);           // hat X
-            pwm[7] = auxPwm(8, gpadAux[3]);           // hat Y
+            // GamepadManager normalises every bound axis to -1..1, triggers included.
+            if (channelCount >= 5) pwm[4] = auxPwm(5, gpadAux[0]);
+            if (channelCount >= 6) pwm[5] = auxPwm(6, gpadAux[1]);
+            if (channelCount >= 7) pwm[6] = auxPwm(7, gpadAux[2]);
+            if (channelCount >= 8) pwm[7] = auxPwm(8, gpadAux[3]);
         }
         return pwm;
     }
@@ -256,7 +295,7 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
 
     private int mapAxis(float raw, int ch1Based) {
         ChannelCfg cfg = channels[ch1Based - 1];
-        if (!cfg.enabled) return (ch1Based <= 8) ? 65535 : 0;
+        if (!cfg.enabled) return (ch1Based <= channelCount) ? 65535 : 0;
         float a = raw;
         if (Math.abs(a) < DEADZONE) a = 0f;
         double span = (cfg.inverted ? -1 : 1) * (cfg.max - cfg.center);
@@ -285,6 +324,7 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
         mode = prefs.getInt("mode", 2);
         stickToChannel = (mode == 1) ? MODE1.clone() : MODE2.clone();
         rateHz = prefs.getInt("rate_hz", 20);
+        channelCount = prefs.getInt("channel_count", 8);
         manualTarget = prefs.getBoolean("target_manual", false);
         manualIp = prefs.getString("manual_ip", "192.168.1.10");
         manualPort = prefs.getInt("manual_port", 14550);
@@ -306,6 +346,8 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
                 c.trim = Integer.parseInt(f[3]);
                 c.inverted = f[4].equals("1");
                 c.enabled = f[5].equals("1");
+                // autoCenter added later; keep the default when an older config is loaded
+                if (f.length >= 7) c.autoCenter = f[6].equals("1");
             } catch (NumberFormatException ignored) {
                 Log.w(TAG, "bad channel cfg entry: " + parts[i]);
             }
@@ -320,7 +362,8 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
             sb.append(c.min).append(',').append(c.max).append(',').append(c.center)
                     .append(',').append(c.trim).append(',')
                     .append(c.inverted ? '1' : '0').append(',')
-                    .append(c.enabled ? '1' : '0');
+                    .append(c.enabled ? '1' : '0').append(',')
+                    .append(c.autoCenter ? '1' : '0');
         }
         prefs.edit().putString("channels_cfg", sb.toString()).apply();
     }

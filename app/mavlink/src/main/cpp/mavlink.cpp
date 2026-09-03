@@ -58,14 +58,38 @@ int mavlink_thread_signal = 0;
 std::atomic<bool> latestMavlinkDataChange = false;
 
 // ---- RC override send path (shared between listen thread and JNI send) ----
-static int g_mavlink_fd = -1;                 // UDP socket used for both recv and send
-static struct sockaddr_in g_peer_addr {};     // last source address seen on incoming traffic
+static int g_mavlink_fd = -1;                 // UDP socket (AF_INET6 dual-stack) for recv+send
+static struct sockaddr_storage g_peer_addr {}; // last source address seen on incoming traffic
+static socklen_t g_peer_len = 0;
 static bool g_has_peer = false;
 static uint8_t g_ap_sysid = 1;                // last autopilot system id (from HEARTBEAT)
 static pthread_mutex_t g_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static struct sockaddr_in g_manual_target {}; // manual RC target (IP:Port) when set
+static struct sockaddr_storage g_manual_target {}; // manual RC target (IP:Port) when set
+static socklen_t g_manual_len = 0;
 static bool g_has_manual_target = false;
+
+/** Format a sockaddr_storage as "host:port" (works for IPv4 and IPv6). */
+static void formatAddr(const struct sockaddr_storage *ss, char *out, size_t outLen) {
+    char host[INET6_ADDRSTRLEN];
+    int port = 0;
+    if (ss->ss_family == AF_INET) {
+        const struct sockaddr_in *s = (const struct sockaddr_in *) ss;
+        if (inet_ntop(AF_INET, &s->sin_addr, host, sizeof(host)) == nullptr) {
+            snprintf(host, sizeof(host), "?");
+        }
+        port = ntohs(s->sin_port);
+    } else if (ss->ss_family == AF_INET6) {
+        const struct sockaddr_in6 *s = (const struct sockaddr_in6 *) ss;
+        if (inet_ntop(AF_INET6, &s->sin6_addr, host, sizeof(host)) == nullptr) {
+            snprintf(host, sizeof(host), "?");
+        }
+        port = ntohs(s->sin6_port);
+    } else {
+        snprintf(host, sizeof(host), "?");
+    }
+    snprintf(out, outLen, "%s:%d", host, port);
+}
 
 // GCS identity used when emitting RC_CHANNELS_OVERRIDE
 static const uint8_t RC_SRC_SYSID = 255;
@@ -83,21 +107,28 @@ static long g_rc_echo_seq = 0;
 
 void *listen(int mavlink_port) {
     __android_log_print(ANDROID_LOG_DEBUG, TAG, "Starting mavlink thread...");
-    // Create socket
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    // Create socket. AF_INET6 with IPV6_V6ONLY=0 gives us a dual-stack socket
+    // that accepts both IPv6 and IPv4 (the latter as v4-mapped addresses).
+    int fd = socket(AF_INET6, SOCK_DGRAM, 0);
     if (fd < 0) {
         __android_log_print(ANDROID_LOG_DEBUG, TAG,
                             "ERROR: Unable to create MavLink socket:  %s", strerror(errno));
         return 0;
     }
 
+    int v6only = 0;
+    if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) < 0) {
+        __android_log_print(ANDROID_LOG_WARN, TAG,
+                            "Unable to enable IPv4/IPv6 dual stack: %s", strerror(errno));
+    }
+
     // Bind port
     __android_log_print(ANDROID_LOG_DEBUG, TAG, "Mavlink listening on %d", mavlink_port);
-    struct sockaddr_in addr = {};
+    struct sockaddr_in6 addr = {};
     memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    inet_pton(AF_INET, "0.0.0.0", &(addr.sin_addr));
-    addr.sin_port = htons(mavlink_port);
+    addr.sin6_family = AF_INET6;
+    addr.sin6_addr = in6addr_any;
+    addr.sin6_port = htons(mavlink_port);
 
     if (bind(fd, (struct sockaddr *) (&addr), sizeof(addr)) != 0) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "Unable to bind MavLink port %d: %s",
@@ -120,7 +151,7 @@ void *listen(int mavlink_port) {
     char buffer[2048];
     while (!mavlink_thread_signal) {
         memset(buffer, 0x00, sizeof(buffer));
-        struct sockaddr_in from {};
+        struct sockaddr_storage from {};
         socklen_t fromlen = sizeof(from);
         int ret = recvfrom(fd, buffer, sizeof(buffer), 0,
                            (struct sockaddr *) &from, &fromlen);
@@ -141,7 +172,8 @@ void *listen(int mavlink_port) {
 
         // Remember the source address so we can send RC override back to it.
         pthread_mutex_lock(&g_peer_mutex);
-        g_peer_addr = from;
+        memcpy(&g_peer_addr, &from, sizeof(g_peer_addr));
+        g_peer_len = fromlen;
         g_has_peer = true;
         pthread_mutex_unlock(&g_peer_mutex);
 
@@ -417,14 +449,17 @@ Java_com_openipc_mavlink_MavlinkNative_nativeSendRcChannels(JNIEnv *env, jclass 
         return JNI_FALSE;
     }
 
-    struct sockaddr_in target {};
+    struct sockaddr_storage target {};
+    socklen_t target_len = 0;
     bool has_target = false;
     pthread_mutex_lock(&g_peer_mutex);
     if (g_has_manual_target) {
-        target = g_manual_target;
+        memcpy(&target, &g_manual_target, sizeof(target));
+        target_len = g_manual_len;
         has_target = true;
     } else if (g_has_peer) {
-        target = g_peer_addr;
+        memcpy(&target, &g_peer_addr, sizeof(target));
+        target_len = g_peer_len;
         has_target = true;
     }
     pthread_mutex_unlock(&g_peer_mutex);
@@ -460,16 +495,17 @@ Java_com_openipc_mavlink_MavlinkNative_nativeSendRcChannels(JNIEnv *env, jclass 
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
     uint16_t mlen = mavlink_msg_to_send_buffer(buf, &msg);
     ssize_t sent = sendto(g_mavlink_fd, buf, mlen, 0,
-                          (struct sockaddr *) &target, sizeof(target));
+                          (struct sockaddr *) &target, target_len);
     if (sent != (ssize_t) mlen) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "RC send failed: %s", strerror(errno));
         return JNI_FALSE;
     }
     // Throttled positive confirmation for logcat verification (every 100 sends ~5s @20Hz).
     if ((++g_rc_send_seq % 100) == 0) {
+        char addrStr[INET6_ADDRSTRLEN + 8];
+        formatAddr(&target, addrStr, sizeof(addrStr));
         __android_log_print(ANDROID_LOG_INFO, TAG,
-                            "RC_CHANNELS_OVERRIDE sent x%ld -> %s:%d",
-                            g_rc_send_seq, inet_ntoa(target.sin_addr), ntohs(target.sin_port));
+                            "RC_CHANNELS_OVERRIDE sent x%ld -> %s", g_rc_send_seq, addrStr);
     }
     return JNI_TRUE;
 }
@@ -482,18 +518,43 @@ Java_com_openipc_mavlink_MavlinkNative_nativeSetRcTarget(JNIEnv *env, jclass cla
     if (ip == nullptr) {
         g_has_manual_target = false;
         memset(&g_manual_target, 0, sizeof(g_manual_target));
+        g_manual_len = 0;
     } else {
         const char *ipc = env->GetStringUTFChars(ip, nullptr);
-        memset(&g_manual_target, 0, sizeof(g_manual_target));
-        g_manual_target.sin_family = AF_INET;
-        if (inet_pton(AF_INET, ipc, &g_manual_target.sin_addr) != 1) {
+        struct sockaddr_in6 t = {};
+        t.sin6_family = AF_INET6;
+        t.sin6_port = htons((uint16_t) port);
+
+        bool ok;
+        if (inet_pton(AF_INET6, ipc, &t.sin6_addr) == 1) {
+            ok = true;   // native IPv6 (also accepts "::ffff:1.2.3.4")
+        } else {
+            struct in_addr v4;
+            if (inet_pton(AF_INET, ipc, &v4) == 1) {
+                // Map IPv4 into ::ffff:a.b.c.d so one dual-stack socket reaches both.
+                unsigned char *b = t.sin6_addr.s6_addr;
+                memset(b, 0, 10);
+                b[10] = 0xff;
+                b[11] = 0xff;
+                memcpy(b + 12, &v4, 4);
+                ok = true;
+            } else {
+                ok = false;
+            }
+        }
+
+        if (ok) {
+            memset(&g_manual_target, 0, sizeof(g_manual_target));
+            memcpy(&g_manual_target, &t, sizeof(t));
+            g_manual_len = sizeof(t);
+            g_has_manual_target = true;
+            __android_log_print(ANDROID_LOG_INFO, TAG,
+                                "RC manual target set to [%s]:%d", ipc, port);
+        } else {
+            g_has_manual_target = false;
             __android_log_print(ANDROID_LOG_ERROR, TAG, "RC manual target: bad IP %s", ipc);
         }
-        g_manual_target.sin_port = htons((uint16_t) port);
         env->ReleaseStringUTFChars(ip, ipc);
-        g_has_manual_target = true;
-        __android_log_print(ANDROID_LOG_INFO, TAG, "RC manual target set to %s:%d",
-                            (ipc ? ipc : ""), port);
     }
     pthread_mutex_unlock(&g_peer_mutex);
 }

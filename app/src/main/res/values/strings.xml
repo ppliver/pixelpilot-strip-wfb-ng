@@ -14,9 +14,10 @@
     <string name="rc_target">回传目标</string>
     <string name="rc_target_auto">自动（学习对端地址）</string>
     <string name="rc_target_manual">手动（指定 IP:端口）</string>
-    <string name="rc_manual_ip_hint">目标 IP（如 192.168.1.10）</string>
+    <string name="rc_manual_ip_hint">目标 IP（IPv4 如 192.168.1.10，或 IPv6 如 fe80::1）</string>
     <string name="rc_manual_port_hint">目标端口（如 14550）</string>
     <string name="rc_channel_config">通道配置</string>
+    <string name="rc_settings">RC 设置</string>
     <string name="rc_lock">摇杆锁定</string>
     <string name="rc_unlock">摇杆解锁</string>
     <string name="rc_config">配置</string>
@@ -34,4 +35,26 @@
     <string name="rc_enabled">启用</string>
     <string name="rc_apply">应用</string>
     <string name="rc_done">完成</string>
+
+    <!-- RC settings: global section -->
+    <string name="rc_auto_center">自动回中</string>
+    <string name="rc_global_section">全局设置</string>
+    <string name="rc_channel_count">通道数量</string>
+    <string name="rc_channel_count_fmt">通道数量（驱动 CH1–CH%d）</string>
+    <string name="rc_rate_hz">发送频率（Hz）</string>
+
+    <!-- RC gamepad calibration -->
+    <string name="rc_gamepad_calib">手柄映射校准</string>
+    <string name="rc_gamepad_calib_help">点“绑定”，然后推动/按下要使用的轴或按键</string>
+    <string name="rc_bind">绑定</string>
+    <string name="rc_binding">请推动要绑定的轴…</string>
+    <string name="rc_unbound">未绑定</string>
+    <string name="rc_reset_bindings">恢复默认映射</string>
+    <string name="rc_live_value">实时值</string>
+    <string name="rc_gamepad_none">未检测到手柄输入</string>
+    <string name="rc_slot_roll">横滚</string>
+    <string name="rc_slot_pitch">俯仰</string>
+    <string name="rc_slot_throttle">油门</string>
+    <string name="rc_slot_yaw">方向</string>
+    <string name="rc_aux_fmt">辅助 %d</string>
 </resources>
