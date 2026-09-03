@@ -124,18 +124,20 @@ public class SecondVideoWindow {
         AppCompatActivity a = activityRef.get();
         if (a == null) return;
 
-        // Creating the native player can throw (e.g. native init failure). Guard it
-        // so a failure degrades to "window not shown" instead of crashing the app.
+        // Create native player and inflate the window under one try block so any
+        // failure (native init or layout inflation) is caught and degrades to a no-op
+        // instead of crashing the app. TextureView famously throws if given a
+        // background drawable, so we removed that from the XML but stay defensive.
         try {
             player = new VideoPlayer(a);
+            container = LayoutInflater.from(a).inflate(R.layout.second_video_window, host, false);
         } catch (Throwable t) {
-            Log.e(TAG, "SecondVideo: failed to create VideoPlayer", t);
+            Log.e(TAG, "SecondVideo: failed to create player / inflate window", t);
             player = null;
+            container = null;
             active = false;
             return;
         }
-
-        container = LayoutInflater.from(a).inflate(R.layout.second_video_window, host, false);
         statusText = container.findViewById(R.id.tvSecondStatus);
         ImageButton close = container.findViewById(R.id.btnClose);
         View dragHandle = container.findViewById(R.id.dragHandle);
