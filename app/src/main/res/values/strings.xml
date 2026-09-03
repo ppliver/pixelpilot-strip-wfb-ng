@@ -66,5 +66,7 @@
     <string name="second_video_reset_pos">重置窗口位置</string>
     <string name="second_video_dialog_title">第二路视频配置</string>
     <string name="second_video_disabled">未启用</string>
+    <string name="second_video_config_hint">启用/停用请在“第二路视频”子菜单勾选“启用第二路视频”。</string>
     <string name="second_video_running">接收中</string>
+    <string name="second_video_error">启动失败，详见日志</string>
 </resources>

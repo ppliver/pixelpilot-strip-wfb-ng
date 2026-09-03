@@ -1406,13 +1406,15 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         en.setCheckable(true);
         en.setChecked(enabled);
         en.setOnMenuItemClickListener(item -> {
-            boolean e = !item.isChecked();
-            item.setChecked(e);
-            if (e) {
+            // Decide the new state from the persisted flag (not item.isChecked,
+            // which Android may have auto-toggled) to avoid double inversion.
+            boolean wantOn = !p.getBoolean("enabled", false);
+            if (wantOn) {
                 secondVideoWindow.enable(p.getString("ip", ""), p.getInt("port", 5601));
             } else {
                 secondVideoWindow.disable();
             }
+            item.setChecked(wantOn);
             item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
             item.setActionView(new View(this));
             return false;
@@ -1448,11 +1450,6 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(40, 20, 40, 20);
 
-        CheckBox cb = new CheckBox(this);
-        cb.setText(R.string.second_video_enable);
-        cb.setChecked(p.getBoolean("enabled", false));
-        root.addView(cb);
-
         TextView ipLbl = new TextView(this);
         ipLbl.setText(R.string.second_video_ip);
         EditText ipEd = new EditText(this);
@@ -1469,6 +1466,12 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         root.addView(portLbl);
         root.addView(portEd);
 
+        TextView hint = new TextView(this);
+        hint.setText(R.string.second_video_config_hint);
+        hint.setTextSize(12);
+        hint.setPadding(0, 16, 0, 0);
+        root.addView(hint);
+
         sv.addView(root);
         b.setView(sv);
         b.setPositiveButton(R.string.rc_apply, (d, w) -> {
@@ -1478,11 +1481,12 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
                 port = Integer.parseInt(portEd.getText().toString().trim());
             } catch (NumberFormatException ignore) {
             }
-            boolean en = cb.isChecked();
-            if (en) {
-                secondVideoWindow.enable(ip, port);
+            // Persist the IP/port. If the stream is already enabled, re-apply the
+            // new config immediately; otherwise just store it for next enable.
+            if (secondVideoWindow.isActive()) {
+                secondVideoWindow.applyConfig(ip, port);
             } else {
-                secondVideoWindow.disable();
+                secondVideoWindow.saveConfigOnly(ip, port);
             }
         });
         b.setNegativeButton(R.string.rc_done, (d, w) -> d.dismiss());

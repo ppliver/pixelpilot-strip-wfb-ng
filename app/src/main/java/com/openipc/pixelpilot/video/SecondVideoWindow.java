@@ -123,7 +123,16 @@ public class SecondVideoWindow {
         AppCompatActivity a = activityRef.get();
         if (a == null) return;
 
-        player = new VideoPlayer(a);
+        // Creating the native player can throw (e.g. native init failure). Guard it
+        // so a failure degrades to "window not shown" instead of crashing the app.
+        try {
+            player = new VideoPlayer(a);
+        } catch (Throwable t) {
+            Log.e(TAG, "SecondVideo: failed to create VideoPlayer", t);
+            player = null;
+            active = false;
+            return;
+        }
 
         container = LayoutInflater.from(a).inflate(R.layout.second_video_window, host, false);
         statusText = container.findViewById(R.id.tvSecondStatus);
@@ -132,8 +141,39 @@ public class SecondVideoWindow {
         View resizeHandle = container.findViewById(R.id.resizeHandle);
         android.view.TextureView texture = container.findViewById(R.id.secondVideoTexture);
 
-        // Wire the texture surface to this player's decoder (index 0).
-        texture.setSurfaceTextureListener(player.configureTextureView(0));
+        // Wire the texture surface to this player's decoder (index 0). The calls
+        // into the native decoder are wrapped so a low-level failure cannot crash
+        // the UI thread.
+        texture.setSurfaceTextureListener(new android.view.TextureView.SurfaceTextureListener() {
+            @Override
+            public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture st, int w, int h) {
+                if (player == null) return;
+                try {
+                    player.addAndStartDecoderReceiver(new android.view.Surface(st), 0);
+                } catch (Throwable t) {
+                    Log.e(TAG, "SecondVideo: setSurface failed", t);
+                }
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture st, int w, int h) {
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture st) {
+                if (player == null) return true;
+                try {
+                    player.stopAndRemoveReceiverDecoder(0);
+                } catch (Throwable t) {
+                    Log.e(TAG, "SecondVideo: clearSurface failed", t);
+                }
+                return true;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture st) {
+            }
+        });
 
         setupDrag(dragHandle);
         setupResize(resizeHandle);
@@ -145,7 +185,12 @@ public class SecondVideoWindow {
         // Restore geometry once the host has been laid out (it has real size).
         host.post(this::restoreGeometry);
 
-        player.startExternalReceiver(port, ip == null ? "" : ip.trim());
+        try {
+            player.startExternalReceiver(port, ip == null ? "" : ip.trim());
+        } catch (Throwable t) {
+            Log.e(TAG, "SecondVideo: failed to start external receiver", t);
+            updateStatus(a.getString(R.string.second_video_error));
+        }
         active = true;
         saveConfig(ip, port, true);
         updateStatus(a.getString(R.string.second_video_running) + " :" + port);
@@ -171,6 +216,14 @@ public class SecondVideoWindow {
 
         SharedPreferences p = prefs();
         p.edit().putBoolean(KEY_ENABLED, false).apply();
+    }
+
+    /** Persist IP/port only (without touching the enabled flag or the running receiver). */
+    public void saveConfigOnly(String ip, int port) {
+        prefs().edit()
+                .putString(KEY_IP, ip == null ? "" : ip.trim())
+                .putInt(KEY_PORT, port)
+                .apply();
     }
 
     /** Switch the port / source filter of a running stream. */
