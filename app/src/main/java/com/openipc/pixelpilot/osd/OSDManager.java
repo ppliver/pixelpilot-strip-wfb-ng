@@ -51,12 +51,23 @@ public class OSDManager {
         return isOSDLocked() ? "Unlock OSD" : "Lock OSD";
     }
 
+    private String enabledKey(OSDElement element) {
+        return element.prefName() + "_enabled";
+    }
+
+    // Legacy key from before the collision-free prefName() change. Kept so a user's
+    // already-checked items are not reset on the first launch after the update.
+    private String legacyEnabledKey(OSDElement element) {
+        return element.name.hashCode() + "_enabled";
+    }
+
     public void onOSDItemCheckChanged(OSDElement element, boolean isChecked) {
         // Show or hide the ImageView corresponding to the checkbox position
         element.layout.setVisibility(isChecked ? View.VISIBLE : View.GONE);
         SharedPreferences prefs = context.getSharedPreferences("osd_config", MODE_PRIVATE);
         SharedPreferences.Editor editor = prefs.edit();
-        editor.putBoolean(element.prefName() + "_enabled", isChecked);
+        editor.putBoolean(enabledKey(element), isChecked);
+        editor.remove(legacyEnabledKey(element));
         editor.apply();
     }
 
@@ -104,7 +115,11 @@ public class OSDManager {
 
     public boolean isElementEnabled(OSDElement elem) {
         SharedPreferences prefs = context.getSharedPreferences("osd_config", MODE_PRIVATE);
-        return prefs.getBoolean(elem.prefName() + "_enabled", false);
+        if (prefs.contains(enabledKey(elem))) {
+            return prefs.getBoolean(enabledKey(elem), false);
+        }
+        // Fall back to the legacy key so previously enabled items stay enabled.
+        return prefs.getBoolean(legacyEnabledKey(elem), false);
     }
 
     public void restoreOSDConfig() {

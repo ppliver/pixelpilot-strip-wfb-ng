@@ -10,6 +10,8 @@ public class OSDElement {
     }
 
     public String prefName() {
-        return String.format("%d", name.hashCode());
+        // Unique, collision-free key (names are unique in the list). Sanitise so it
+        // is a safe SharedPreferences key. Used for position prefs (_fx/_fy).
+        return "osd_" + name.replace(' ', '_').replace('.', '_').replace('-', '_');
     }
 }
