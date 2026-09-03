@@ -61,6 +61,7 @@ import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.hardware.input.InputManager;
 import android.view.InputDevice;
@@ -272,6 +273,9 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         // Second floating UDP video window (independent stream)
         secondVideoWindow = new SecondVideoWindow(this, binding.secondVideoHost);
+        // The RC overlay sits above the floating window, so keep a touch passthrough
+        // hole in sync with the window rect to keep it draggable/resizable.
+        secondVideoWindow.setGeometryListener(this::updateJoystickPassthrough);
         secondVideoWindow.init();
 
         // Battery Receiver
@@ -794,6 +798,28 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         if (rcManager.isEnabled()) {
             rcManager.start();
         }
+        updateJoystickPassthrough();
+    }
+
+    /**
+     * The RC overlay is layered above the floating second video window so the sticks are
+     * never hidden by it. To keep the window draggable/resizable we carve a touch
+     * passthrough hole into the joystick view matching the window rectangle: touches
+     * inside the window fall through to it, touches elsewhere still drive the sticks.
+     */
+    private void updateJoystickPassthrough() {
+        if (binding == null) return;
+        VirtualJoystickView joystick = binding.rcOverlay.joystickView;
+        if (joystick == null) return;
+        Rect r = (secondVideoWindow == null) ? null : secondVideoWindow.getWindowRect();
+        if (r == null) {
+            joystick.setPassthroughRect(null);
+            return;
+        }
+        int[] loc = new int[2];
+        joystick.getLocationOnScreen(loc);
+        joystick.setPassthroughRect(new Rect(
+                r.left - loc[0], r.top - loc[1], r.right - loc[0], r.bottom - loc[1]));
     }
 
     /**

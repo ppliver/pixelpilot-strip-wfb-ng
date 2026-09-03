@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Layer 30dp: above the OSD (25dp) and the floating second video window (20dp).
+     Opacity is user adjustable so the OSD stays readable underneath. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/rcControlOverlay"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:translationZ="20dp"
+    android:translationZ="30dp"
     android:visibility="gone">
 
     <LinearLayout

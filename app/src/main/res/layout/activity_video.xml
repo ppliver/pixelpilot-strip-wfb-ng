@@ -5,6 +5,22 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <!--
+      Layer stack (bottom -> top). Keep this list in sync when adding overlays.
+
+        0dp   mainVideo / detectionOverlay   base video
+        10dp  tv_message                     "Loading..." hint
+        20dp  secondVideoHost                floating 2nd UDP video window
+        25dp  osdLayout                      OSD telemetry elements
+        30dp  rcOverlay                      RC control (sticks), opacity adjustable
+        40dp  btnSettings                    settings gear, always reachable
+
+      The RC overlay sits above the OSD, but its opacity is user adjustable so it
+      never hides the OSD. To keep the layers underneath usable, VirtualJoystickView
+      passes fresh touches through to the floating window and to OSD elements that
+      are unlocked for dragging (see VideoActivity#updateRcPassthrough).
+    -->
+
     <TextureView
         android:id="@+id/mainVideo"
         android:layout_width="0dp"
@@ -74,7 +90,7 @@
         style="@style/Widget.Material3.Button.IconButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:translationZ="30dp"
+        android:translationZ="40dp"
         app:icon="@drawable/baseline_settings_24"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
@@ -100,7 +116,7 @@
         android:orientation="vertical"
         android:clipChildren="false"
         android:clipToPadding="false"
-        android:translationZ="15dp"
+        android:translationZ="25dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.0"
@@ -681,12 +697,13 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Host for the floating second UDP video window. Stays on top of OSD/RC. -->
+    <!-- Host for the floating second UDP video window (layer 20dp: above the main
+         video, below the OSD and the RC overlay). -->
     <FrameLayout
         android:id="@+id/secondVideoHost"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:translationZ="25dp"
+        android:translationZ="20dp"
         android:clipChildren="false"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"

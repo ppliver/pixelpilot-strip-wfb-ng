@@ -1,6 +1,7 @@
 package com.openipc.pixelpilot.video;
 
 import android.content.SharedPreferences;
+import android.graphics.Rect;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -10,6 +11,7 @@ import android.widget.ImageButton;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.openipc.pixelpilot.R;
@@ -52,6 +54,14 @@ public class SecondVideoWindow {
     // window visible but leaves room for the OSD and the virtual joysticks.
     private static final float DEFAULT_WIDTH_FRACTION = 0.28f;
 
+    /**
+     * Notified whenever the window appears, disappears, moves or is resized, so the
+     * activity can keep the RC overlay's touch passthrough region in sync.
+     */
+    public interface GeometryListener {
+        void onGeometryChanged();
+    }
+
     private final WeakReference<AppCompatActivity> activityRef;
     private final FrameLayout host;
 
@@ -59,6 +69,7 @@ public class SecondVideoWindow {
     private View container;
     private TextView statusText;
     private boolean active = false;
+    private GeometryListener geometryListener;
 
     public SecondVideoWindow(@NonNull AppCompatActivity activity, @NonNull FrameLayout host) {
         this.activityRef = new WeakReference<>(activity);
@@ -147,6 +158,31 @@ public class SecondVideoWindow {
         return active;
     }
 
+    public void setGeometryListener(@Nullable GeometryListener l) {
+        this.geometryListener = l;
+    }
+
+    /** Notify listeners that the window moved / resized / appeared / disappeared. */
+    private void notifyGeometryChanged() {
+        if (geometryListener != null) {
+            geometryListener.onGeometryChanged();
+        }
+    }
+
+    /**
+     * Current window rectangle in screen coordinates, or null when the window is
+     * not shown. Used to carve a touch passthrough hole in the RC overlay so the
+     * window stays draggable even though the overlay sits above it.
+     */
+    @Nullable
+    public Rect getWindowRect() {
+        if (!active || container == null || container.getWidth() == 0) return null;
+        int[] loc = new int[2];
+        container.getLocationOnScreen(loc);
+        return new Rect(loc[0], loc[1],
+                loc[0] + container.getWidth(), loc[1] + container.getHeight());
+    }
+
     /**
      * Enable the second video window. If already active, just re-apply the
      * (possibly new) configuration.
@@ -221,7 +257,10 @@ public class SecondVideoWindow {
         host.setVisibility(View.VISIBLE);
 
         // Restore geometry once the host has been laid out (it has real size).
-        host.post(this::restoreGeometry);
+        host.post(() -> {
+            restoreGeometry();
+            notifyGeometryChanged();
+        });
 
         try {
             player.startExternalReceiver(port, ip == null ? "" : ip.trim());
@@ -254,6 +293,7 @@ public class SecondVideoWindow {
 
         SharedPreferences p = prefs();
         p.edit().putBoolean(KEY_ENABLED, false).apply();
+        notifyGeometryChanged();
     }
 
     /** Persist IP/port only (without touching the enabled flag or the running receiver). */
@@ -292,6 +332,8 @@ public class SecondVideoWindow {
             lp.topMargin = defaultY();
             container.setLayoutParams(lp);
         }
+        saveGeometry();
+        notifyGeometryChanged();
     }
 
     // ----------------------------------------------------------------------
@@ -364,6 +406,7 @@ public class SecondVideoWindow {
                     }
                     case MotionEvent.ACTION_UP:
                         saveGeometry();
+                        notifyGeometryChanged();
                         return true;
                     default:
                         return false;
@@ -398,6 +441,7 @@ public class SecondVideoWindow {
                     }
                     case MotionEvent.ACTION_UP:
                         saveGeometry();
+                        notifyGeometryChanged();
                         return true;
                     default:
                         return false;

@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.MotionEvent;
@@ -47,6 +48,12 @@ public class VirtualJoystickView extends View {
     // When a physical gamepad is connected we disable touch "打杆" (stick input)
     // and instead mirror the gamepad axes onto the sticks as pure visual feedback.
     private boolean gamepadMirror = false;
+
+    // Screen region (in this view's local coordinates) where a fresh touch must
+    // pass through to the layers below (the floating second video window) instead
+    // of driving the sticks. Null = consume touches everywhere. Only honoured in
+    // flight (locked) mode so the pads can still be repositioned when unlocked.
+    private Rect passthroughRect = null;
 
     // Layout: percentages for persistence (0..1)
     private final float[] cxPct = {0.24f, 0.76f};
@@ -223,6 +230,20 @@ public class VirtualJoystickView extends View {
         invalidate();
     }
 
+    /**
+     * Mark a screen region (in this view's local coordinates) where touches must fall
+     * through to the layers below instead of being consumed by the sticks.
+     *
+     * <p>The RC overlay sits above the floating second video window, so without this the
+     * window would become undraggable. Only flight (locked) mode honours it — in layout
+     * (unlocked) mode the stick pads take priority so they can still be repositioned.</p>
+     *
+     * @param r region to pass through, or null to consume touches everywhere
+     */
+    public void setPassthroughRect(@Nullable Rect r) {
+        this.passthroughRect = (r == null || r.isEmpty()) ? null : new Rect(r);
+    }
+
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
@@ -247,6 +268,18 @@ public class VirtualJoystickView extends View {
         int action = event.getActionMasked();
         int pointerIndex = event.getActionIndex();
         int pointerId = event.getPointerId(pointerIndex);
+
+        // Let a fresh touch inside the passthrough region fall through to the layers
+        // below (floating second video window). Once a stick is being driven we keep
+        // consuming so an in-flight gesture is never stolen mid-way.
+        boolean isDown = (action == MotionEvent.ACTION_DOWN
+                || action == MotionEvent.ACTION_POINTER_DOWN);
+        if (locked && isDown && pointerPad.size() == 0 && passthroughRect != null) {
+            if (passthroughRect.contains((int) event.getX(pointerIndex),
+                    (int) event.getY(pointerIndex))) {
+                return false;
+            }
+        }
 
         if (locked) {
             return handleFlightTouch(event, action, pointerIndex, pointerId);
