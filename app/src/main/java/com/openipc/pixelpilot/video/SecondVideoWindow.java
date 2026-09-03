@@ -1,6 +1,7 @@
 package com.openipc.pixelpilot.video;
 
 import android.content.SharedPreferences;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
