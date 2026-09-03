@@ -5,6 +5,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -21,6 +22,7 @@ import androidx.annotation.Nullable;
  * {@link LayoutChangeListener} so the activity can persist it.
  */
 public class VirtualJoystickView extends View {
+    private static final String TAG = "VirtualJoystick";
 
     public static final int LEFT = 0;
     public static final int RIGHT = 1;
@@ -220,6 +222,8 @@ public class VirtualJoystickView extends View {
             case MotionEvent.ACTION_POINTER_DOWN: {
                 int pad = (event.getX(pointerIndex) < getWidth() / 2f) ? LEFT : RIGHT;
                 pointerPad.put(pointerId, pad);
+                Log.d(TAG, "pointer down pid=" + pointerId + " pad=" + (pad == LEFT ? "L" : "R")
+                        + " pointers=" + pointerPad.size());
                 updatePad(pad, event.getX(pointerIndex), event.getY(pointerIndex));
                 break;
             }
@@ -232,23 +236,18 @@ public class VirtualJoystickView extends View {
                 }
                 break;
             }
+            case MotionEvent.ACTION_POINTER_UP: {
+                releasePointer(pointerId, true);
+                break;
+            }
             case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_POINTER_UP:
-            case MotionEvent.ACTION_CANCEL: {
-                int pad = pointerPad.get(pointerId, -1);
-                pointerPad.delete(pointerId);
-                if (pad != -1) {
-                    boolean changed = false;
-                    if (autoCenterX[pad] && padNx[pad] != 0f) {
-                        padNx[pad] = 0f;
-                        changed = true;
-                    }
-                    if (autoCenterY[pad] && padNy[pad] != 0f) {
-                        padNy[pad] = 0f;
-                        changed = true;
-                    }
-                    if (changed) report(pad);
-                }
+            case MotionEvent.ACTION_CANCEL:
+            case MotionEvent.ACTION_OUTSIDE: {
+                // When the gesture ends or is canceled we must release every pointer,
+                // otherwise a stale mapping can keep a pad stuck off-centre.
+                Log.d(TAG, "release all action=" + action + " pid=" + pointerId
+                        + " pointers=" + pointerPad.size());
+                releaseAllPads();
                 break;
             }
             default:
@@ -256,6 +255,49 @@ public class VirtualJoystickView extends View {
         }
         invalidate();
         return true;
+    }
+
+    /** Release a single pointer. Only auto-centre its pad if no other active pointer is on it. */
+    private void releasePointer(int pointerId, boolean autoCenterIfUnused) {
+        int pad = pointerPad.get(pointerId, -1);
+        pointerPad.delete(pointerId);
+        if (pad == -1) return;
+        boolean stillUsed = false;
+        for (int i = 0; i < pointerPad.size(); i++) {
+            if (pointerPad.valueAt(i) == pad) {
+                stillUsed = true;
+                break;
+            }
+        }
+        Log.d(TAG, "pointer up pid=" + pointerId + " pad=" + (pad == LEFT ? "L" : "R")
+                + " stillUsed=" + stillUsed + " pointers=" + pointerPad.size());
+        if (autoCenterIfUnused && !stillUsed) {
+            autoCenterPad(pad);
+        }
+    }
+
+    /** Auto-centre all axes that are configured to spring back. */
+    private void autoCenterPad(int pad) {
+        boolean changed = false;
+        if (autoCenterX[pad] && padNx[pad] != 0f) {
+            padNx[pad] = 0f;
+            changed = true;
+        }
+        if (autoCenterY[pad] && padNy[pad] != 0f) {
+            padNy[pad] = 0f;
+            changed = true;
+        }
+        if (changed) {
+            report(pad);
+            Log.d(TAG, "auto-centre pad=" + (pad == LEFT ? "L" : "R"));
+        }
+    }
+
+    /** Release every tracked pointer and auto-centre all pads. */
+    private void releaseAllPads() {
+        pointerPad.clear();
+        autoCenterPad(LEFT);
+        autoCenterPad(RIGHT);
     }
 
     private boolean handleAdjustTouch(MotionEvent event, int action, int pointerIndex, int pointerId) {
@@ -300,14 +342,20 @@ public class VirtualJoystickView extends View {
                 }
                 break;
             }
-            case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_POINTER_UP:
-            case MotionEvent.ACTION_CANCEL: {
+            case MotionEvent.ACTION_POINTER_UP: {
                 int pad = pointerPad.get(pointerId, -1);
                 pointerPad.delete(pointerId);
                 if (pad != -1) {
                     adjustAction[pad] = ADJUST_NONE;
                 }
+                break;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+            case MotionEvent.ACTION_OUTSIDE: {
+                pointerPad.clear();
+                adjustAction[LEFT] = ADJUST_NONE;
+                adjustAction[RIGHT] = ADJUST_NONE;
                 break;
             }
             default:
