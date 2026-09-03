@@ -727,9 +727,12 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         VirtualJoystickView joystick = binding.rcOverlay.joystickView;
         joystick.setStickListener(rcManager);
+        joystick.setLayoutChangeListener((pad, cxPct, cyPct, radiusPct) ->
+                rcManager.setJoystickLayout(pad, cxPct, cyPct, radiusPct));
         joystick.setThrottleSide(rcManager.getThrottleSide());
         joystick.setOpacity(0.5f);
         applyStickAutoCenter();
+        loadJoystickLayout(joystick);
 
         gamepad = new GamepadManager(this);
         gamepad.setListener(rcManager);
@@ -759,10 +762,11 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         });
 
         binding.rcOverlay.rcLock.setOnClickListener(v -> {
-            boolean locked = !joystick.isLocked();
+            boolean locked = !joystick.isLocked(); // locked=true=fly, false=adjust
             joystick.setLocked(locked);
             binding.rcOverlay.rcLock.setText(locked ? R.string.rc_unlock : R.string.rc_lock);
         });
+        binding.rcOverlay.rcLock.setText(joystick.isLocked() ? R.string.rc_unlock : R.string.rc_lock);
 
         binding.rcOverlay.rcConfig.setOnClickListener(v -> showRcChannelConfigDialog());
         binding.rcOverlay.rcHide.setOnClickListener(v -> {
@@ -786,6 +790,14 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
         VirtualJoystickView joystick = binding.rcOverlay.joystickView;
         joystick.setAxisAutoCenter(VirtualJoystickView.LEFT, ac[0], ac[1]);
         joystick.setAxisAutoCenter(VirtualJoystickView.RIGHT, ac[2], ac[3]);
+    }
+
+    private void loadJoystickLayout(VirtualJoystickView joystick) {
+        if (rcManager == null) return;
+        RcControllerManager.JoystickLayout left = rcManager.getJoystickLayout(VirtualJoystickView.LEFT);
+        RcControllerManager.JoystickLayout right = rcManager.getJoystickLayout(VirtualJoystickView.RIGHT);
+        joystick.setLayout(VirtualJoystickView.LEFT, left.cxPct, left.cyPct, left.radiusPct);
+        joystick.setLayout(VirtualJoystickView.RIGHT, right.cxPct, right.cyPct, right.radiusPct);
     }
 
     private void setRcOverlayVisible(boolean visible) {

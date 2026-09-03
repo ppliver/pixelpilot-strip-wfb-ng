@@ -13,10 +13,12 @@ import androidx.annotation.Nullable;
 /**
  * Dual virtual joystick overlay.
  *
- * Reports normalized stick position (-1..1) for the left and right pads via
- * {@link StickListener#onStick(String, float, float)}. The pad assigned as the
- * throttle side keeps its last vertical position when the finger is lifted
- * (spring-centered sticks return to 0).
+ * In normal (locked) mode the pads act as flight controls and report normalized
+ * stick position (-1..1) via {@link StickListener#onStick(String,float,float)}.
+ *
+ * In layout/adjust (unlocked) mode the user can drag each pad to reposition it
+ * and use the +/- buttons to resize. The new layout is reported through
+ * {@link LayoutChangeListener} so the activity can persist it.
  */
 public class VirtualJoystickView extends View {
 
@@ -27,17 +29,31 @@ public class VirtualJoystickView extends View {
         void onStick(String side, float nx, float ny);
     }
 
+    public interface LayoutChangeListener {
+        void onLayoutChanged(int pad, float cxPct, float cyPct, float radiusPct);
+    }
+
     private StickListener listener;
+    private LayoutChangeListener layoutListener;
     private int throttleSide = LEFT; // Mode 2 -> throttle on left stick
-    private boolean locked = false;
+
+    // locked=true  -> pads fixed, normal flight input
+    // locked=false -> layout adjust mode: drag to move, +/- to resize
+    private boolean locked = true;
     private float opacity = 0.5f;
 
+    // Layout: percentages for persistence (0..1)
+    private final float[] cxPct = {0.24f, 0.76f};
+    private final float[] cyPct = {0.62f, 0.62f};
+    private float radiusPct = 0.20f;
+
+    // Cached absolute values computed in onSizeChanged
     private float padRadius;
     private float stickRadius;
-    private float[] cx = new float[2];
-    private float[] cy = new float[2];
+    private final float[] cx = new float[2];
+    private final float[] cy = new float[2];
 
-    // Current displayed normalized offset per pad (sticky for throttle).
+    // Current displayed normalized offset per pad.
     private final float[] padNx = new float[2];
     private final float[] padNy = new float[2];
 
@@ -48,9 +64,23 @@ public class VirtualJoystickView extends View {
     private final boolean[] autoCenterX = {true, true};
     private final boolean[] autoCenterY = {true, true};
 
+    // Layout adjust mode state
+    private static final int ADJUST_NONE = -1;
+    private static final int ADJUST_MOVE = 0;
+    private static final int ADJUST_ENLARGE = 1;
+    private static final int ADJUST_SHRINK = 2;
+    private final int[] adjustAction = {ADJUST_NONE, ADJUST_NONE}; // per pad
+    private final float[] moveStartCx = new float[2];
+    private final float[] moveStartCy = new float[2];
+    private final float[] moveStartX = new float[2];
+    private final float[] moveStartY = new float[2];
+
     private final Paint basePaint = new Paint();
     private final Paint stickPaint = new Paint();
     private final Paint ringPaint = new Paint();
+    private final Paint textPaint = new Paint();
+    private final Paint btnPaint = new Paint();
+    private final Paint btnTextPaint = new Paint();
 
     public VirtualJoystickView(Context context) {
         super(context);
@@ -75,11 +105,24 @@ public class VirtualJoystickView extends View {
         ringPaint.setColor(Color.parseColor("#aaddff"));
         ringPaint.setStyle(Paint.Style.STROKE);
         ringPaint.setStrokeWidth(3f);
+        textPaint.setColor(Color.parseColor("#aaddff"));
+        textPaint.setTextAlign(Paint.Align.CENTER);
+        textPaint.setAntiAlias(true);
+        btnPaint.setColor(Color.parseColor("#224466"));
+        btnPaint.setStyle(Paint.Style.FILL);
+        btnPaint.setAntiAlias(true);
+        btnTextPaint.setColor(Color.WHITE);
+        btnTextPaint.setTextAlign(Paint.Align.CENTER);
+        btnTextPaint.setAntiAlias(true);
         setWillNotDraw(false);
     }
 
     public void setStickListener(StickListener l) {
         this.listener = l;
+    }
+
+    public void setLayoutChangeListener(LayoutChangeListener l) {
+        this.layoutListener = l;
     }
 
     public void setThrottleSide(int side) {
@@ -98,11 +141,36 @@ public class VirtualJoystickView extends View {
         autoCenterY[pad] = yAuto;
     }
 
+    /**
+     * Load a persisted layout. Percentages are relative to view width/height;
+     * radius is relative to min(width,height).
+     */
+    public void setLayout(int pad, float cxPct, float cyPct, float radiusPct) {
+        if (pad != LEFT && pad != RIGHT) return;
+        this.cxPct[pad] = clamp01(cxPct);
+        this.cyPct[pad] = clamp01(cyPct);
+        this.radiusPct = clamp(radiusPct, 0.08f, 0.45f);
+        recalcLayout();
+        invalidate();
+    }
+
     public void setLocked(boolean locked) {
         this.locked = locked;
-        if (locked) {
-            pointerPad.clear();
+        pointerPad.clear();
+        for (int pad = 0; pad < 2; pad++) {
+            adjustAction[pad] = ADJUST_NONE;
+            boolean changed = false;
+            if (padNx[pad] != 0f) {
+                padNx[pad] = 0f;
+                changed = true;
+            }
+            if (padNy[pad] != 0f) {
+                padNy[pad] = 0f;
+                changed = true;
+            }
+            if (changed) report(pad);
         }
+        invalidate();
     }
 
     public boolean isLocked() {
@@ -117,22 +185,36 @@ public class VirtualJoystickView extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        padRadius = Math.min(w, h) * 0.20f;
+        recalcLayout();
+    }
+
+    private void recalcLayout() {
+        int w = Math.max(1, getWidth());
+        int h = Math.max(1, getHeight());
+        padRadius = Math.min(w, h) * radiusPct;
         stickRadius = padRadius * 0.45f;
-        cx[LEFT] = w * 0.24f;
-        cy[LEFT] = h * 0.62f;
-        cx[RIGHT] = w * 0.76f;
-        cy[RIGHT] = h * 0.62f;
+        cx[LEFT] = w * cxPct[LEFT];
+        cy[LEFT] = h * cyPct[LEFT];
+        cx[RIGHT] = w * cxPct[RIGHT];
+        cy[RIGHT] = h * cyPct[RIGHT];
+        textPaint.setTextSize(padRadius * 0.35f);
+        btnTextPaint.setTextSize(padRadius * 0.30f);
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (locked) return false;
-
         int action = event.getActionMasked();
         int pointerIndex = event.getActionIndex();
         int pointerId = event.getPointerId(pointerIndex);
 
+        if (locked) {
+            return handleFlightTouch(event, action, pointerIndex, pointerId);
+        } else {
+            return handleAdjustTouch(event, action, pointerIndex, pointerId);
+        }
+    }
+
+    private boolean handleFlightTouch(MotionEvent event, int action, int pointerIndex, int pointerId) {
         switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN: {
@@ -156,7 +238,6 @@ public class VirtualJoystickView extends View {
                 int pad = pointerPad.get(pointerId, -1);
                 pointerPad.delete(pointerId);
                 if (pad != -1) {
-                    // Each axis springs back only if its channel is configured to.
                     boolean changed = false;
                     if (autoCenterX[pad] && padNx[pad] != 0f) {
                         padNx[pad] = 0f;
@@ -175,6 +256,113 @@ public class VirtualJoystickView extends View {
         }
         invalidate();
         return true;
+    }
+
+    private boolean handleAdjustTouch(MotionEvent event, int action, int pointerIndex, int pointerId) {
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN: {
+                float x = event.getX(pointerIndex);
+                float y = event.getY(pointerIndex);
+                int pad = nearestPad(x, y);
+                pointerPad.put(pointerId, pad);
+
+                // Check for resize button hit first (top-right of pad)
+                int hitBtn = hitResizeButton(pad, x, y);
+                if (hitBtn != ADJUST_NONE) {
+                    adjustAction[pad] = hitBtn;
+                    applyResizeStep(pad, hitBtn);
+                    break;
+                }
+
+                adjustAction[pad] = ADJUST_MOVE;
+                moveStartX[pad] = x;
+                moveStartY[pad] = y;
+                moveStartCx[pad] = cx[pad];
+                moveStartCy[pad] = cy[pad];
+                break;
+            }
+            case MotionEvent.ACTION_MOVE: {
+                for (int i = 0; i < event.getPointerCount(); i++) {
+                    int pid = event.getPointerId(i);
+                    int pad = pointerPad.get(pid, -1);
+                    if (pad == -1) continue;
+                    if (adjustAction[pad] != ADJUST_MOVE) continue;
+                    float dx = event.getX(i) - moveStartX[pad];
+                    float dy = event.getY(i) - moveStartY[pad];
+                    cx[pad] = clamp(moveStartCx[pad] + dx, padRadius, getWidth() - padRadius);
+                    cy[pad] = clamp(moveStartCy[pad] + dy, padRadius + buttonRadius() * 2f, getHeight() - padRadius);
+                    cxPct[pad] = cx[pad] / Math.max(1f, getWidth());
+                    cyPct[pad] = cy[pad] / Math.max(1f, getHeight());
+                    if (layoutListener != null) {
+                        layoutListener.onLayoutChanged(pad, cxPct[pad], cyPct[pad], radiusPct);
+                    }
+                }
+                break;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP:
+            case MotionEvent.ACTION_CANCEL: {
+                int pad = pointerPad.get(pointerId, -1);
+                pointerPad.delete(pointerId);
+                if (pad != -1) {
+                    adjustAction[pad] = ADJUST_NONE;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        invalidate();
+        return true;
+    }
+
+    private int nearestPad(float x, float y) {
+        float dLeft = (float) Math.hypot(x - cx[LEFT], y - cy[LEFT]);
+        float dRight = (float) Math.hypot(x - cx[RIGHT], y - cy[RIGHT]);
+        return (dLeft <= dRight) ? LEFT : RIGHT;
+    }
+
+    private float buttonRadius() {
+        return Math.max(18f, padRadius * 0.18f);
+    }
+
+    private int hitResizeButton(int pad, float x, float y) {
+        float r = buttonRadius();
+        float[] centers = resizeButtonCenters(pad, r);
+        float dEnlarge = (float) Math.hypot(x - centers[0], y - centers[1]);
+        float dShrink   = (float) Math.hypot(x - centers[2], y - centers[3]);
+        if (dEnlarge <= r * 1.3f) return ADJUST_ENLARGE;
+        if (dShrink   <= r * 1.3f) return ADJUST_SHRINK;
+        return ADJUST_NONE;
+    }
+
+    private float[] resizeButtonCenters(int pad, float r) {
+        float angle = 45f * (float) Math.PI / 180f;
+        float offset = padRadius + r * 1.4f;
+        float cxEn = cx[pad] + (float) Math.cos(angle) * offset;
+        float cyEn = cy[pad] - (float) Math.sin(angle) * offset;
+        float cxSh = cxEn + r * 2.4f;
+        float cySh = cyEn;
+        return new float[]{cxEn, cyEn, cxSh, cySh};
+    }
+
+    private void applyResizeStep(int pad, int action) {
+        float step = 0.01f;
+        if (action == ADJUST_ENLARGE) {
+            radiusPct = clamp(radiusPct + step, 0.08f, 0.45f);
+        } else if (action == ADJUST_SHRINK) {
+            radiusPct = clamp(radiusPct - step, 0.08f, 0.45f);
+        }
+        recalcLayout();
+        // Keep pad within screen after resize
+        cx[pad] = clamp(cx[pad], padRadius, getWidth() - padRadius);
+        cy[pad] = clamp(cy[pad], padRadius + buttonRadius() * 2f, getHeight() - padRadius);
+        cxPct[pad] = cx[pad] / Math.max(1f, getWidth());
+        cyPct[pad] = cy[pad] / Math.max(1f, getHeight());
+        if (layoutListener != null) {
+            layoutListener.onLayoutChanged(pad, cxPct[pad], cyPct[pad], radiusPct);
+        }
     }
 
     private void updatePad(int pad, float x, float y) {
@@ -211,13 +399,48 @@ public class VirtualJoystickView extends View {
         basePaint.setAlpha((int) (alpha * 0.6));
         stickPaint.setAlpha(alpha);
         ringPaint.setAlpha(alpha);
+        textPaint.setAlpha(alpha);
 
         for (int pad = 0; pad < 2; pad++) {
             canvas.drawCircle(cx[pad], cy[pad], padRadius, basePaint);
             canvas.drawCircle(cx[pad], cy[pad], padRadius, ringPaint);
+
+            // Crosshair
+            canvas.drawLine(cx[pad] - padRadius, cy[pad], cx[pad] + padRadius, cy[pad], ringPaint);
+            canvas.drawLine(cx[pad], cy[pad] - padRadius, cx[pad], cy[pad] + padRadius, ringPaint);
+
             float sx = cx[pad] + padNx[pad] * padRadius;
             float sy = cy[pad] + padNy[pad] * padRadius;
             canvas.drawCircle(sx, sy, stickRadius, stickPaint);
+
+            if (!locked) {
+                // Adjust mode hint
+                String hint = "拖动调整";
+                canvas.drawText(hint, cx[pad], cy[pad] + padRadius * 0.55f, textPaint);
+
+                // Resize buttons
+                float r = buttonRadius();
+                float[] btns = resizeButtonCenters(pad, r);
+                drawButton(canvas, btns[0], btns[1], r, "＋", alpha);
+                drawButton(canvas, btns[2], btns[3], r, "－", alpha);
+            }
         }
+    }
+
+    private void drawButton(Canvas canvas, float x, float y, float r, String label, int alpha) {
+        btnPaint.setAlpha(alpha);
+        btnTextPaint.setAlpha(alpha);
+        canvas.drawCircle(x, y, r, btnPaint);
+        Paint.FontMetrics fm = btnTextPaint.getFontMetrics();
+        float textY = y + (fm.descent - fm.ascent) / 2f - fm.descent;
+        canvas.drawText(label, x, textY, btnTextPaint);
+    }
+
+    private static float clamp01(float v) {
+        return v < 0f ? 0f : (v > 1f ? 1f : v);
+    }
+
+    private static float clamp(float v, float min, float max) {
+        return v < min ? min : (v > max ? max : v);
     }
 }

@@ -227,6 +227,48 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
         saveChannels();
     }
 
+    // ---- joystick layout persistence ---------------------------------------
+
+    public static class JoystickLayout {
+        public final float cxPct;
+        public final float cyPct;
+        public final float radiusPct;
+
+        public JoystickLayout(float cxPct, float cyPct, float radiusPct) {
+            this.cxPct = cxPct;
+            this.cyPct = cyPct;
+            this.radiusPct = radiusPct;
+        }
+    }
+
+    public JoystickLayout getJoystickLayout(int pad) {
+        String key = (pad == VirtualJoystickView.LEFT) ? "joy_layout_left" : "joy_layout_right";
+        String def = defaultLayout(pad);
+        String s = prefs.getString(key, def);
+        String[] p = s.split(",");
+        try {
+            return new JoystickLayout(Float.parseFloat(p[0]),
+                    Float.parseFloat(p[1]), Float.parseFloat(p[2]));
+        } catch (Exception e) {
+            return parseLayout(defaultLayout(pad));
+        }
+    }
+
+    public void setJoystickLayout(int pad, float cxPct, float cyPct, float radiusPct) {
+        String key = (pad == VirtualJoystickView.LEFT) ? "joy_layout_left" : "joy_layout_right";
+        prefs.edit().putString(key, cxPct + "," + cyPct + "," + radiusPct).apply();
+    }
+
+    private String defaultLayout(int pad) {
+        return (pad == VirtualJoystickView.LEFT) ? "0.24,0.62,0.20" : "0.76,0.62,0.20";
+    }
+
+    private JoystickLayout parseLayout(String s) {
+        String[] p = s.split(",");
+        return new JoystickLayout(Float.parseFloat(p[0]),
+                Float.parseFloat(p[1]), Float.parseFloat(p[2]));
+    }
+
     // ---- input feeds --------------------------------------------------------
 
     @Override
