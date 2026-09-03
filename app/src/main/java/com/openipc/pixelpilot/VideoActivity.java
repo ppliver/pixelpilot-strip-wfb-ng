@@ -1415,6 +1415,7 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
                 secondVideoWindow.disable();
             }
             item.setChecked(wantOn);
+            popup.dismiss();
             item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
             item.setActionView(new View(this));
             return false;
