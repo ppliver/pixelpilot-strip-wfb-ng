@@ -67,6 +67,12 @@ class UDPReceiver
 
     void setForwarding(const std::string& ip, int port, bool enabled);
 
+    /**
+     * Only accept packets whose sender IP (printable form, v4-mapped prints as
+     * dotted quad) matches @param ip. Empty string disables the filter (accept all).
+     */
+    void setSourceFilter(const std::string& ip);
+
   private:
     void receiveFromUDPLoop();
 
