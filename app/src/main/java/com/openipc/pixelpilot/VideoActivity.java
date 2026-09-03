@@ -1415,10 +1415,11 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
                 secondVideoWindow.disable();
             }
             item.setChecked(wantOn);
+            // Do NOT call setShowAsAction/setActionView here: that trick re-opens
+            // the cascading submenu after popup.dismiss(), which made the popup
+            // linger on top of the window we just toggled.
             popup.dismiss();
-            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW);
-            item.setActionView(new View(this));
-            return false;
+            return true;
         });
 
         MenuItem cfg = sub.add(R.string.second_video_config);

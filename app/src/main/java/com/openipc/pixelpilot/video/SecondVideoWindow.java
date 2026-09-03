@@ -39,12 +39,18 @@ public class SecondVideoWindow {
     private static final String KEY_H = "h";
 
     private static final int DEFAULT_PORT = 5601;
-    private static final int DEFAULT_W = 320;
-    private static final int DEFAULT_H = 240;
-    private static final int DEFAULT_X = 40;
-    private static final int DEFAULT_Y = 40;
-    private static final int MIN_W = 120;
-    private static final int MIN_H = 90;
+    // Fallback defaults (used only before the host view has been measured, e.g.
+    // when first launched in a tiny test harness). Real defaults are computed
+    // dynamically from the host size via defaultW/defaultH/defaultX/defaultY.
+    private static final int FALLBACK_W_DP = 220;
+    private static final int FALLBACK_H_DP = 124;
+    private static final int FALLBACK_X_DP = 16;
+    private static final int FALLBACK_Y_DP = 72; // below the 48dp settings gear + margin
+    private static final int MIN_W_DP = 160;
+    private static final int MIN_H_DP = 90;
+    // Fraction of the host width used for the default PiP width. Keeps the
+    // window visible but leaves room for the OSD and the virtual joysticks.
+    private static final float DEFAULT_WIDTH_FRACTION = 0.28f;
 
     private final WeakReference<AppCompatActivity> activityRef;
     private final FrameLayout host;
@@ -62,6 +68,35 @@ public class SecondVideoWindow {
     private SharedPreferences prefs() {
         AppCompatActivity a = activityRef.get();
         return a.getSharedPreferences(PREF, AppCompatActivity.MODE_PRIVATE);
+    }
+
+    private int dp(int v) {
+        AppCompatActivity a = activityRef.get();
+        if (a == null) return v;
+        return (int) (v * a.getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private int defaultW() {
+        int hw = host.getWidth();
+        if (hw <= 0) return dp(FALLBACK_W_DP);
+        int desired = (int) (hw * DEFAULT_WIDTH_FRACTION);
+        return clamp(desired, dp(MIN_W_DP), Math.max(dp(MIN_W_DP), hw / 2));
+    }
+
+    private int defaultH() {
+        // 16:9 PiP keeps the stream recognisable even before the first frame
+        // arrives and matches typical FPV camera output.
+        return defaultW() * 9 / 16;
+    }
+
+    private int defaultX() {
+        int hw = host.getWidth();
+        return hw > 0 ? dp(FALLBACK_X_DP) : dp(FALLBACK_X_DP);
+    }
+
+    private int defaultY() {
+        // Sits just under the 48dp top-left settings gear.
+        return dp(FALLBACK_Y_DP);
     }
 
     /** Restore the enabled stream if the user left it on. Call from onCreate. */
@@ -251,10 +286,10 @@ public class SecondVideoWindow {
         prefs().edit().remove(KEY_X).remove(KEY_Y).remove(KEY_W).remove(KEY_H).apply();
         if (container != null) {
             FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) container.getLayoutParams();
-            lp.width = DEFAULT_W;
-            lp.height = DEFAULT_H;
-            lp.leftMargin = DEFAULT_X;
-            lp.topMargin = DEFAULT_Y;
+            lp.width = defaultW();
+            lp.height = defaultH();
+            lp.leftMargin = defaultX();
+            lp.topMargin = defaultY();
             container.setLayoutParams(lp);
         }
     }
@@ -266,10 +301,10 @@ public class SecondVideoWindow {
     private void restoreGeometry() {
         if (container == null || host.getWidth() == 0) return;
         SharedPreferences p = prefs();
-        int w = p.getInt(KEY_W, DEFAULT_W);
-        int h = p.getInt(KEY_H, DEFAULT_H);
-        int x = p.getInt(KEY_X, DEFAULT_X);
-        int y = p.getInt(KEY_Y, DEFAULT_Y);
+        int w = p.getInt(KEY_W, defaultW());
+        int h = p.getInt(KEY_H, defaultH());
+        int x = p.getInt(KEY_X, defaultX());
+        int y = p.getInt(KEY_Y, defaultY());
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) container.getLayoutParams();
         lp.width = w;
         lp.height = h;
@@ -356,8 +391,8 @@ public class SecondVideoWindow {
                     case MotionEvent.ACTION_MOVE: {
                         int dx = (int) (e.getRawX() - startX);
                         int dy = (int) (e.getRawY() - startY);
-                        lp.width = clamp(origW + dx, MIN_W, host.getWidth());
-                        lp.height = clamp(origH + dy, MIN_H, host.getHeight());
+                        lp.width = clamp(origW + dx, dp(MIN_W_DP), host.getWidth());
+                        lp.height = clamp(origH + dy, dp(MIN_H_DP), host.getHeight());
                         container.setLayoutParams(lp);
                         return true;
                     }
