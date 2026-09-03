@@ -44,6 +44,10 @@ public class VirtualJoystickView extends View {
     private boolean locked = true;
     private float opacity = 0.5f;
 
+    // When a physical gamepad is connected we disable touch "打杆" (stick input)
+    // and instead mirror the gamepad axes onto the sticks as pure visual feedback.
+    private boolean gamepadMirror = false;
+
     // Layout: percentages for persistence (0..1)
     private final float[] cxPct = {0.24f, 0.76f};
     private final float[] cyPct = {0.62f, 0.62f};
@@ -179,6 +183,41 @@ public class VirtualJoystickView extends View {
         return locked;
     }
 
+    /**
+     * Enable/disable gamepad mirror mode.
+     *
+     * <p>When enabled the finger can no longer drive the sticks (打杆 disabled) because a
+     * physical gamepad is in control; the stick knobs only reflect the external gamepad
+     * axes pushed through {@link #setExternalAxes(int, float, float)} as visual feedback.</p>
+     */
+    public void setGamepadMirror(boolean on) {
+        this.gamepadMirror = on;
+        pointerPad.clear();
+        for (int pad = 0; pad < 2; pad++) {
+            adjustAction[pad] = ADJUST_NONE;
+            padNx[pad] = 0f;
+            padNy[pad] = 0f;
+        }
+        invalidate();
+    }
+
+    public boolean isGamepadMirror() {
+        return gamepadMirror;
+    }
+
+    /**
+     * Push external (gamepad) axis values for visual feedback only.
+     * Does NOT report to the stick listener — the gamepad already drives RC directly —
+     * and only applies while in flight (locked) mode.
+     */
+    public void setExternalAxes(int pad, float nx, float ny) {
+        if (!gamepadMirror || !locked) return;
+        if (pad != LEFT && pad != RIGHT) return;
+        padNx[pad] = clamp(nx, -1f, 1f);
+        padNy[pad] = clamp(ny, -1f, 1f);
+        invalidate();
+    }
+
     public void setOpacity(float opacity) {
         this.opacity = Math.max(0.1f, Math.min(1f, opacity));
         invalidate();
@@ -217,6 +256,10 @@ public class VirtualJoystickView extends View {
     }
 
     private boolean handleFlightTouch(MotionEvent event, int action, int pointerIndex, int pointerId) {
+        // Gamepad connected: touch打杆 disabled, sticks are visual-only mirror.
+        if (gamepadMirror) {
+            return true;
+        }
         switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN: {

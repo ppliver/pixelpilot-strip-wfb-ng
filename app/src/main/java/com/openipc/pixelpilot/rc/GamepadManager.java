@@ -89,6 +89,7 @@ public class GamepadManager {
     private AxesListener listener;
     private CalibListener calibListener;
     private long lastSeenMs = 0;
+    private boolean deviceConnected = false;
 
     private boolean learning = false;
     private int learnSlot = -1;
@@ -109,7 +110,12 @@ public class GamepadManager {
     }
 
     public boolean isConnected() {
-        return (System.currentTimeMillis() - lastSeenMs) < 2000;
+        return deviceConnected || (System.currentTimeMillis() - lastSeenMs) < 2000;
+    }
+
+    /** Set by the activity's device listener to track real connect/disconnect. */
+    public void setDeviceConnected(boolean connected) {
+        this.deviceConnected = connected;
     }
 
     // ---- binding table ------------------------------------------------------

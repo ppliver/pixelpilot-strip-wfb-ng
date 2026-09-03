@@ -61,6 +61,8 @@ import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.graphics.Typeface;
+import android.hardware.input.InputManager;
+import android.view.InputDevice;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -141,6 +143,7 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
     // RC control
     private RcControllerManager rcManager;
     private GamepadManager gamepad;
+    private boolean gamepadConnected = false;
     private TextView[] chVal = new TextView[8];
 
     public boolean getVRSetting() {
@@ -727,6 +730,7 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         VirtualJoystickView joystick = binding.rcOverlay.joystickView;
         joystick.setStickListener(rcManager);
+        rcManager.setJoystickMirror(joystick);
         joystick.setLayoutChangeListener((pad, cxPct, cyPct, radiusPct) ->
                 rcManager.setJoystickLayout(pad, cxPct, cyPct, radiusPct));
         joystick.setThrottleSide(rcManager.getThrottleSide());
@@ -736,6 +740,7 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
         gamepad = new GamepadManager(this);
         gamepad.setListener(rcManager);
+        setupGamepadConnectionWatcher();
 
         chVal[0] = binding.rcOverlay.chVal1;
         chVal[1] = binding.rcOverlay.chVal2;
@@ -802,6 +807,60 @@ public class VideoActivity extends AppCompatActivity implements IVideoParamsChan
 
     private void setRcOverlayVisible(boolean visible) {
         binding.rcOverlay.getRoot().setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * Track physical gamepad connect/disconnect via the system InputDevice listener and
+     * reflect it on the RC pipeline + on-screen sticks:
+     *  - when a gamepad is present the virtual sticks stop accepting touch "打杆" and only
+     *    mirror the gamepad as visual feedback (gamepad takes priority / is more controllable);
+     *  - when it is removed, touch control is re-enabled.
+     */
+    private void setupGamepadConnectionWatcher() {
+        InputManager im = (InputManager) getSystemService(Context.INPUT_SERVICE);
+        if (im == null) return;
+        InputManager.InputDeviceListener listener = new InputManager.InputDeviceListener() {
+            @Override
+            public void onInputDeviceAdded(int id) {
+                refreshGamepadState(im);
+            }
+
+            @Override
+            public void onInputDeviceRemoved(int id) {
+                refreshGamepadState(im);
+            }
+
+            @Override
+            public void onInputDeviceChanged(int id) {
+                refreshGamepadState(im);
+            }
+        };
+        refreshGamepadState(im);
+        im.registerInputDeviceListener(listener, null);
+    }
+
+    private void refreshGamepadState(InputManager im) {
+        boolean connected = false;
+        for (int id : im.getInputDeviceIds()) {
+            InputDevice d = im.getInputDevice(id);
+            if (d != null && isGamepadDevice(d)) {
+                connected = true;
+                break;
+            }
+        }
+        if (connected == gamepadConnected) return;
+        gamepadConnected = connected;
+        if (gamepad != null) gamepad.setDeviceConnected(connected);
+        if (rcManager != null) rcManager.setGamepadConnected(connected);
+        binding.rcOverlay.joystickView.setGamepadMirror(connected);
+        Log.d(TAG, "gamepad " + (connected ? "connected" : "disconnected")
+                + " -> mirror=" + connected);
+    }
+
+    private static boolean isGamepadDevice(InputDevice d) {
+        int src = d.getSources();
+        return (src & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+                || (src & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD;
     }
 
     private void updateRcHud(int[] pwm, boolean ok) {

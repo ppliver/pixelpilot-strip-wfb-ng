@@ -71,6 +71,8 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
     private final float[] gpadAxes = new float[4];
     private final float[] gpadAux = new float[4]; // ch5..ch8 (brake,gas,hatX,hatY)
     private long lastGamepadMs = 0;
+    private boolean gamepadConnected = false;
+    private VirtualJoystickView joystickMirror;
 
     private int[] lastPwm = new int[MAX_CHANNELS];
     private DisplayListener displayListener;
@@ -290,10 +292,28 @@ public class RcControllerManager implements VirtualJoystickView.StickListener,
         gpadAux[2] = ch7;
         gpadAux[3] = ch8;
         lastGamepadMs = System.currentTimeMillis();
+        // Mirror the gamepad onto the on-screen sticks as visual feedback only.
+        if (joystickMirror != null) {
+            joystickMirror.setExternalAxes(VirtualJoystickView.LEFT, lx, ly);
+            joystickMirror.setExternalAxes(VirtualJoystickView.RIGHT, rx, ry);
+        }
+    }
+
+    /** Wire the on-screen joystick used purely for visual gamepad mirroring. */
+    public void setJoystickMirror(VirtualJoystickView joy) {
+        this.joystickMirror = joy;
+    }
+
+    /** Reflect the actual gamepad connection state (device add/remove). */
+    public void setGamepadConnected(boolean connected) {
+        this.gamepadConnected = connected;
     }
 
     private boolean isGamepadActive() {
-        return (System.currentTimeMillis() - lastGamepadMs) < 2000;
+        // A connected gamepad stays the active source even when it is resting and
+        // stops emitting events; the 2s event window is a fallback for setups where
+        // no device listener is wired.
+        return gamepadConnected || (System.currentTimeMillis() - lastGamepadMs) < 2000;
     }
 
     public boolean isGamepadConnected() {
