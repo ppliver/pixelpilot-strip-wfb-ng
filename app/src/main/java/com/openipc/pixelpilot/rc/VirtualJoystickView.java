@@ -25,6 +25,14 @@ import androidx.annotation.Nullable;
 public class VirtualJoystickView extends View {
     private static final String TAG = "VirtualJoystick";
 
+    /**
+     * Extra slack (as a multiple of the pad radius) allowed when deciding whether a
+     * touch *starts* on a pad. Fingers are fat and the ring is thin, so a touch a few
+     * pixels outside the ring still counts as "on the pad". Once the gesture is
+     * accepted the stick value is still clamped to the ring (see {@link #updatePad}).
+     */
+    private static final float ACTIVATE_SLOP = 1.08f;
+
     public static final int LEFT = 0;
     public static final int RIGHT = 1;
 
@@ -275,8 +283,12 @@ public class VirtualJoystickView extends View {
         boolean isDown = (action == MotionEvent.ACTION_DOWN
                 || action == MotionEvent.ACTION_POINTER_DOWN);
         if (locked && isDown && pointerPad.size() == 0 && passthroughRect != null) {
-            if (passthroughRect.contains((int) event.getX(pointerIndex),
-                    (int) event.getY(pointerIndex))) {
+            float px = event.getX(pointerIndex);
+            float py = event.getY(pointerIndex);
+            // A touch inside a ring always belongs to the stick (the RC layer is on top),
+            // even if the floating window happens to overlap it. Outside the rings the
+            // window keeps the touch so it stays draggable.
+            if (padAt(px, py) == -1 && passthroughRect.contains((int) px, (int) py)) {
                 return false;
             }
         }
@@ -296,7 +308,17 @@ public class VirtualJoystickView extends View {
         switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN: {
-                int pad = (event.getX(pointerIndex) < getWidth() / 2f) ? LEFT : RIGHT;
+                // The stick may only be grabbed from inside its ring. Previously any
+                // touch in the left/right half of the screen drove a pad, which meant
+                // the whole half-screen was a (very jumpy) control surface.
+                int pad = padAt(event.getX(pointerIndex), event.getY(pointerIndex));
+                if (pad == -1) {
+                    Log.d(TAG, "ignore down outside pads pid=" + pointerId
+                            + " x=" + (int) event.getX(pointerIndex)
+                            + " y=" + (int) event.getY(pointerIndex));
+                    // Not consumed: let the layers below (video / floating window) have it.
+                    return false;
+                }
                 pointerPad.put(pointerId, pad);
                 Log.d(TAG, "pointer down pid=" + pointerId + " pad=" + (pad == LEFT ? "L" : "R")
                         + " pointers=" + pointerPad.size());
@@ -382,11 +404,29 @@ public class VirtualJoystickView extends View {
             case MotionEvent.ACTION_POINTER_DOWN: {
                 float x = event.getX(pointerIndex);
                 float y = event.getY(pointerIndex);
-                int pad = nearestPad(x, y);
+
+                // The resize buttons live just outside the ring, so they are hit tested
+                // independently. Dragging a pad requires grabbing it inside the ring —
+                // otherwise a stray touch anywhere on screen would yank a stick away.
+                int pad = -1;
+                int hitBtn = ADJUST_NONE;
+                for (int p = 0; p < 2; p++) {
+                    int b = hitResizeButton(p, x, y);
+                    if (b != ADJUST_NONE) {
+                        pad = p;
+                        hitBtn = b;
+                        break;
+                    }
+                }
+                if (pad == -1) {
+                    pad = padAt(x, y);
+                }
+                if (pad == -1) {
+                    Log.d(TAG, "adjust: ignore down outside pads pid=" + pointerId);
+                    return false;
+                }
                 pointerPad.put(pointerId, pad);
 
-                // Check for resize button hit first (top-right of pad)
-                int hitBtn = hitResizeButton(pad, x, y);
                 if (hitBtn != ADJUST_NONE) {
                     adjustAction[pad] = hitBtn;
                     applyResizeStep(pad, hitBtn);
@@ -441,10 +481,22 @@ public class VirtualJoystickView extends View {
         return true;
     }
 
-    private int nearestPad(float x, float y) {
+    /**
+     * Hit test against the two rings.
+     *
+     * @return the pad whose ring (plus a small slop) contains the point, or -1 when the
+     *         point is outside both rings.
+     */
+    private int padAt(float x, float y) {
+        float slop = padRadius * ACTIVATE_SLOP;
         float dLeft = (float) Math.hypot(x - cx[LEFT], y - cy[LEFT]);
         float dRight = (float) Math.hypot(x - cx[RIGHT], y - cy[RIGHT]);
-        return (dLeft <= dRight) ? LEFT : RIGHT;
+        boolean inLeft = dLeft <= slop;
+        boolean inRight = dRight <= slop;
+        if (inLeft && inRight) return (dLeft <= dRight) ? LEFT : RIGHT;
+        if (inLeft) return LEFT;
+        if (inRight) return RIGHT;
+        return -1;
     }
 
     private float buttonRadius() {
@@ -533,8 +585,10 @@ public class VirtualJoystickView extends View {
             canvas.drawLine(cx[pad] - padRadius, cy[pad], cx[pad] + padRadius, cy[pad], ringPaint);
             canvas.drawLine(cx[pad], cy[pad] - padRadius, cx[pad], cy[pad] + padRadius, ringPaint);
 
-            float sx = cx[pad] + padNx[pad] * padRadius;
-            float sy = cy[pad] + padNy[pad] * padRadius;
+            // Keep the knob itself inside the ring (output range stays -1..1).
+            float travel = Math.max(0f, padRadius - stickRadius);
+            float sx = cx[pad] + padNx[pad] * travel;
+            float sy = cy[pad] + padNy[pad] * travel;
             canvas.drawCircle(sx, sy, stickRadius, stickPaint);
 
             if (!locked) {
