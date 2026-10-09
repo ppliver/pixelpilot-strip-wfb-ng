@@ -24,17 +24,33 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install SDK packages + NDK
+        # android-actions/setup-android@v3 now fails on runner images shipping
+        # cmdline-tools 16.0: it still tries to install the removed "tools" package
+        # ("Failed to find package 'tools'" -> exit 1). Drive sdkmanager directly.
         run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager \
+          set -eu
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "SDK_ROOT=$SDK_ROOT"
+          SM=$(ls -1d "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | tail -1 || true)
+          if [ -z "$SM" ]; then
+            mkdir -p "$SDK_ROOT/cmdline-tools"
+            curl -sSL -o /tmp/cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            rm -rf "$SDK_ROOT/cmdline-tools/latest"
+            unzip -q /tmp/cmdline-tools.zip -d "$SDK_ROOT/cmdline-tools"
+            mv "$SDK_ROOT/cmdline-tools/cmdline-tools" "$SDK_ROOT/cmdline-tools/latest"
+            SM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          echo "sdkmanager=$SM"
+          yes | "$SM" --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
+          "$SM" --sdk_root="$SDK_ROOT" \
             "platform-tools" \
             "build-tools;35.0.0" \
             "platforms;android-34" \
             "ndk;26.1.10909125"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
